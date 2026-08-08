@@ -189,6 +189,7 @@ input { font: inherit; color: inherit; }
   color: var(--text-faint);
   font-size: 15px;
 }
+.stage-empty[hidden] { display: none; }
 .table-glow {
   position: absolute; left: 50%; bottom: -40%;
   width: 120%; height: 80%;

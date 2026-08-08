@@ -516,6 +516,12 @@ function layoutPositions(count, size, { w, h }) {
 const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
 const EASE_LAND = 'cubic-bezier(0.34, 1.4, 0.5, 1)';
 
+function settleActor(actor, rot, settle, t) {
+  rot.style.transform = toMatrix3d(settle);
+  actor.style.transform = `translate(-50%, -50%) translate(${t.x}px,${t.y}px) scale(1)`;
+  actor.style.opacity = '1';
+}
+
 function animateRoll(items, mode) {
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const eff = reduced ? 'none' : mode;
@@ -531,24 +537,23 @@ function animateRoll(items, mode) {
     const delay = i * 90 + rand() * 70;
 
     if (eff === 'none') {
-      rot.style.transform = toMatrix3d(settle);
-      actor.style.transform = `${actorBase} translate(0px,0px) scale(1)`;
-      actor.style.opacity = '1';
+      settleActor(actor, rot, settle, t);
       return;
     }
 
     if (eff === 'minimal') {
       const m0 = randomRot(), m1 = randomRot();
-      rot.animate([
+      const rotAnim = rot.animate([
         { transform: toMatrix3d(m0), offset: 0, easing: 'ease-in-out' },
         { transform: toMatrix3d(m1), offset: 0.55, easing: EASE_OUT },
         { transform: toMatrix3d(settle), offset: 1 }
       ], { duration: 850 + delay, delay, fill: 'both' });
-      actor.animate([
+      const actorAnim = actor.animate([
         { transform: `${actorBase} translate(0px,0px) scale(0.92)`, opacity: 0, offset: 0, easing: EASE_OUT },
         { transform: `${actorBase} translate(0px,0px) scale(1.03)`, opacity: 1, offset: 0.85, easing: EASE_LAND },
         { transform: `${actorBase} translate(0px,0px) scale(1)`, opacity: 1, offset: 1 }
       ], { duration: 850 + delay, delay, fill: 'both' });
+      Promise.all([rotAnim.finished, actorAnim.finished]).then(() => settleActor(actor, rot, settle, { x: 0, y: 0 })).catch(() => {});
       return;
     }
 
@@ -556,20 +561,22 @@ function animateRoll(items, mode) {
     const sx = (rand() - 0.5) * w * 0.9;
     const sy = (rand() - 0.5) * h * 0.9;
     const m0 = randomRot(), m1 = randomRot(), m2 = randomRot();
-    rot.animate([
+    const rotAnim = rot.animate([
       { transform: toMatrix3d(m0), offset: 0, easing: 'ease-out' },
       { transform: toMatrix3d(m1), offset: 0.4, easing: 'ease-out' },
       { transform: toMatrix3d(m2), offset: 0.75, easing: EASE_OUT },
       { transform: toMatrix3d(settle), offset: 1 }
     ], { duration: 1350 + delay, delay, fill: 'both' });
-    actor.animate([
+    const actorAnim = actor.animate([
       { transform: `${actorBase} translate(${sx}px,${sy}px) scale(0.5)`, opacity: 0, offset: 0, easing: 'ease-out' },
       { transform: `${actorBase} translate(${sx * 0.55}px,${sy * 0.55}px) scale(0.85)`, opacity: 1, offset: 0.2, easing: 'ease-out' },
       { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1.1)`, offset: 0.85, easing: EASE_LAND },
       { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1)`, offset: 1 }
     ], { duration: 1350 + delay, delay, fill: 'both' });
+    Promise.all([rotAnim.finished, actorAnim.finished]).then(() => settleActor(actor, rot, settle, t)).catch(() => {});
     window.setTimeout(() => Sound.thud(), 900 + delay + rand() * 300);
   });
+  return targets;
 }
 
 /* ---------------- readout ---------------- */
@@ -694,10 +701,14 @@ function doRoll(exprStr) {
 
   const duration = state.anim === 'none' || window.matchMedia('(prefers-reduced-motion: reduce)').matches
     ? 60 : (state.anim === 'minimal' ? 950 : 1500);
-  animateRoll(items, state.anim);
+  const targets = animateRoll(items, state.anim);
 
   window.setTimeout(() => {
     state.rolling = false;
+    // force final settled state so dice are always visible after a roll
+    items.forEach((item, i) => {
+      settleActor(item.actor, item.rot, item.settle, targets[i] || { x: 0, y: 0 });
+    });
     renderReadout(parsed, roll);
     pushHistory(parsed, roll);
     $('#table-glow').classList.add('is-lit');
@@ -820,13 +831,6 @@ function init() {
   renderHistory();
   bindSettings();
   refreshSelection();
-  updateRollTogetherBtn();
-
-  // expression form
-  $('#expr-form').addEventListener('submit', e => {
-    e.preventDefault();
-    doRoll($('#expr-input').value);
-  });
 
   // roll-together button
   const rollBtn = document.createElement('button');
@@ -839,6 +843,13 @@ function init() {
     doRoll(expr);
   });
   $('#tray-head').appendChild(rollBtn);
+  updateRollTogetherBtn();
+
+  // expression form
+  $('#expr-form').addEventListener('submit', e => {
+    e.preventDefault();
+    doRoll($('#expr-input').value);
+  });
 
   // quick rolls
   const qs = $('#quick-select');
