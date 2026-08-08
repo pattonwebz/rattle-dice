@@ -1115,34 +1115,27 @@ function closePanels() {
 const Shake = (() => {
   let last = null;
   let lastTrigger = 0;
-  let lastActive = 0;
   let listening = false;
   const THRESHOLD = 22; // delta g
-  const DEBOUNCE_MS = 700;   // min gap between triggers
-  const SETTLE_MS = 600;     // quiet period required before re-arming
+  const DEBOUNCE_MS = 500;
 
   function onMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc || !state.shake) return;
     const now = Date.now();
+    // Debounce: one trigger per 500ms window. A single quick shake produces
+    // a few motion spikes within ~100ms, so only the first can fire.
     if (now - lastTrigger < DEBOUNCE_MS) return;
     if (!last) { last = { x: acc.x || 0, y: acc.y || 0, z: acc.z || 0 }; return; }
     const dx = Math.abs((acc.x || 0) - last.x);
     const dy = Math.abs((acc.y || 0) - last.y);
     const dz = Math.abs((acc.z || 0) - last.z);
+    // Always refresh the baseline first, so a roll in progress never leaves
+    // a stale pre-shake reading that re-fires after the roll ends.
     last = { x: acc.x || 0, y: acc.y || 0, z: acc.z || 0 };
-    const delta = dx + dy + dz;
-    // Any significant motion pushes out the "quiet" timestamp: the settle
-    // window only starts once the phone has actually calmed down.
-    if (delta > THRESHOLD * 0.5) lastActive = now;
-    // Re-arm only after the phone has been quiet for a while, so a single
-    // long shake can never fire twice.
-    if (now - lastActive < SETTLE_MS) return;
     if (state.rolling) return;
-    if (delta > THRESHOLD) {
+    if (dx + dy + dz > THRESHOLD) {
       lastTrigger = now;
-      lastActive = now;
-      last = null;
       doRoll(state.lastRollExpr);
     }
   }
