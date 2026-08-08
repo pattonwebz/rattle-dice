@@ -364,7 +364,19 @@ function suffix(ops) {
 }
 
 /* ---------------- die DOM building ---------------- */
-function buildFaceEl(face, dieType, size) {
+// Fixed overhead light: faces pointing up catch more light, giving the die depth.
+const LIGHT_DIR = V.norm([-0.35, -0.6, 0.85]);
+const DIE_HUE = { d6: 80, d8: 45, d10: 300, d10t: 300, d12: 160, d20: 20, d4: 60, d100: 80 };
+function faceShade(n, dieType) {
+  const d = V.dot(n, LIGHT_DIR);
+  const t = (d + 1) / 2; // 0..1
+  const hue = DIE_HUE[dieType] !== undefined ? DIE_HUE[dieType] : 70;
+  const chroma = hue === 80 ? 0.015 : 0.05; // d6 stays ivory; others carry a tint
+  const dark = Math.min(0.92, 0.66 + t * 0.24);   // bottom faces darker, top faces lighter
+  const light = Math.min(0.96, dark + 0.07);
+  return `linear-gradient(145deg, oklch(${light.toFixed(2)} ${chroma} ${hue}) 0%, oklch(${dark.toFixed(2)} ${chroma} ${hue}) 100%)`;
+}
+function buildFaceEl(face, dieType, size, worldN) {
   const el = document.createElement('div');
   el.className = 'face';
   el.dataset.value = face.value;
@@ -375,7 +387,8 @@ function buildFaceEl(face, dieType, size) {
   const tz = face.dist * size / 2;
   el.style.transform = `${toMatrix3d(M)} translateZ(${tz.toFixed(2)}px)`;
   if (face.poly) el.style.clipPath = `polygon(${face.poly})`;
-  el.innerHTML = faceHTML(face, dieType, panel);
+  el.style.setProperty('--shade', faceShade(worldN || face.n, dieType));
+  el.innerHTML = faceHTML(face, dieType, panel, worldN);
   return el;
 }
 
@@ -385,19 +398,32 @@ const PIPS = {
   6: [[0, 0], [0, 2], [1, 0], [1, 2], [2, 0], [2, 2]]
 };
 
-function faceHTML(face, dieType, panel) {
+function faceHTML(face, dieType, panel, worldN) {
   if (dieType === 'd6') {
     const pips = PIPS[face.value] || [];
-    return `<span class="pips">${pips.map(p => `<i style="left:${p[0] * 50}%;top:${p[1] * 50}%"></i>`).join('')}</span>`;
+    const onDark = worldN ? V.dot(worldN, LIGHT_DIR) < -0.1 : false;
+    const pipColor = onDark ? 'rgba(240,240,240,0.92)' : 'rgba(20,20,18,0.92)';
+    return `<span class="pips" style="--pip:${pipColor}">${pips.map(p => `<i style="left:${p[0] * 50}%;top:${p[1] * 50}%"></i>`).join('')}</span>`;
   }
   const fs = Math.max(10, panel * 0.34);
-  return `<span class="face-num" style="font-size:${fs.toFixed(0)}px">${face.label}</span>`;
+  const onDark = worldN ? V.dot(worldN, LIGHT_DIR) < -0.1 : false;
+  const color = onDark ? '#f2efe8' : '#1a1a16';
+  return `<span class="face-num" style="font-size:${fs.toFixed(0)}px;color:${color}">${face.label}</span>`;
 }
 
 function settleMatrix(face) {
   const R = alignMatrix(face.n, [0, 0, 1]);
   const spin = rotMatrix([0, 0, 1], rand() * Math.PI * 2);
   return mul3(spin, R);
+}
+
+// Apply rotation matrix R to vector v (row-vector convention like toMatrix3d).
+function applyMatrix(M, v) {
+  return [
+    M[0][0] * v[0] + M[0][1] * v[1] + M[0][2] * v[2],
+    M[1][0] * v[0] + M[1][1] * v[1] + M[1][2] * v[2],
+    M[2][0] * v[0] + M[2][1] * v[1] + M[2][2] * v[2]
+  ];
 }
 
 function buildDie(type, value, size) {
@@ -407,9 +433,15 @@ function buildDie(type, value, size) {
   rot.className = 'die-rotator die-' + type;
   const g = GEOMETRY[type] || GEOMETRY.d6;
   const face = g.faces.find(f => f.value === value) || g.faces[0];
-  for (const f of g.faces) rot.appendChild(buildFaceEl(f, type, size));
+  // Decide the settle rotation first so face shading matches the final
+  // world orientation (light from above stays consistent after the roll).
+  const settle = settleMatrix(face);
+  for (const f of g.faces) {
+    const worldN = applyMatrix(settle, f.n);
+    rot.appendChild(buildFaceEl(f, type, size, worldN));
+  }
   actor.appendChild(rot);
-  return { actor, rot, settle: settleMatrix(face), size };
+  return { actor, rot, settle, size };
 }
 
 /* ---------------- sound ---------------- */
@@ -517,6 +549,10 @@ const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
 const EASE_LAND = 'cubic-bezier(0.34, 1.4, 0.5, 1)';
 
 function settleActor(actor, rot, settle, t) {
+  // Cancel any running/filled animations so inline styles win the cascade.
+  for (const el of [actor, rot]) {
+    if (el.getAnimations) el.getAnimations().forEach(a => a.cancel());
+  }
   rot.style.transform = toMatrix3d(settle);
   actor.style.transform = `translate(-50%, -50%) translate(${t.x}px,${t.y}px) scale(1)`;
   actor.style.opacity = '1';
@@ -591,18 +627,22 @@ function renderReadout(parsed, roll) {
   const valueEl = $('#result-value');
   const detailEl = $('#result-detail');
   const groups = roll.groups;
+  // Detail only when it adds information: dropped dice, multiple dice,
+  // multiple groups, or modifiers. A plain 1d20 shows just the total.
+  const hasDetail = groups.some(g => g.sides !== 100 && (g.cnt > 1 || g.dies.some(d => d.dropped)))
+    || groups.length > 1
+    || roll.mod !== 0;
   const parts = groups.map(g => {
-    const name = g.sides === 100 ? 'd100' : `${g.cnt}d${g.sides}${g.ops ? suffix(g.ops) : ''}`;
     const vals = g.dies.map(d => fmtDie(d, d.type)).join(' · ');
-    const sum = g.sides === 100 ? g.combined : g.dies.reduce((s, d) => s + (d.kept ? d.value : 0), 0);
-    return `${name}: ${vals} → ${sum}`;
+    return `${vals}`;
   });
   const modPart = roll.mod ? `${roll.mod > 0 ? ' + ' : ' − '}${Math.abs(roll.mod)}` : '';
   labelEl.textContent = exprLabel(parsed);
   valueEl.textContent = String(roll.total);
-  detailEl.innerHTML = parts.join('  ') + modPart + ` = ${roll.total}`;
+  detailEl.innerHTML = hasDetail ? parts.join('  ') + modPart + ` = ${roll.total}` : '';
 
   valueEl.classList.remove('is-crit', 'is-fumble', 'is-spin');
+  labelEl.classList.remove('is-special');
   let special = '';
   for (const g of groups) {
     if (g.sides === 20 && g.cnt === 1) {
@@ -613,6 +653,7 @@ function renderReadout(parsed, roll) {
   }
   valueEl.classList.add('is-spin');
   labelEl.textContent = special || exprLabel(parsed);
+  if (special) labelEl.classList.add('is-special');
   window.setTimeout(() => valueEl.classList.remove('is-spin'), 350);
 }
 

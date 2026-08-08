@@ -12,9 +12,9 @@
   --border-strong: oklch(0.42 0.03 60);
 
   /* text */
-  --text: oklch(0.93 0.01 70);
-  --text-muted: oklch(0.68 0.02 60);
-  --text-faint: oklch(0.5 0.02 60);
+  --text: oklch(0.94 0.01 70);
+  --text-muted: oklch(0.74 0.02 60);
+  --text-faint: oklch(0.56 0.02 60);
 
   /* accent — gambler's amber */
   --accent: oklch(0.78 0.14 70);
@@ -143,6 +143,11 @@ input { font: inherit; color: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.readout-label.is-special {
+  color: var(--accent-strong);
+  font-size: 15px;
+  font-weight: 700;
+}
 .readout-value {
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
@@ -180,6 +185,15 @@ input { font: inherit; color: inherit; }
     radial-gradient(100% 100% at 50% 0%, oklch(0.21 0.015 60) 0%, oklch(0.15 0.01 60) 100%);
   overflow: hidden;
   min-height: 0;
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.04);
+}
+.stage::after {
+  content: "";
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(60% 50% at 50% 42%, oklch(0.3 0.03 60 / 0.35) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
 }
 .stage-inner { position: relative; width: 100%; height: 100%; }
 .stage-empty {
@@ -227,12 +241,11 @@ input { font: inherit; color: inherit; }
   position: absolute;
   left: 0; top: 0;
   display: flex; align-items: center; justify-content: center;
-  background:
-    linear-gradient(145deg, oklch(0.95 0.01 80) 0%, oklch(0.85 0.01 70) 100%);
-  border: 1px solid oklch(0.55 0.02 70 / 0.8);
-  box-shadow: inset 0 0 6px oklch(0.5 0.02 70 / 0.4);
-  backface-visibility: visible;
-  color: oklch(0.18 0.01 60);
+  background: var(--shade, linear-gradient(145deg, oklch(0.97 0.01 80) 0%, oklch(0.87 0.01 70) 100%));
+  border: 1px solid oklch(0.45 0.02 60 / 0.9);
+  box-shadow: inset 0 0 6px oklch(0.35 0.02 60 / 0.45);
+  backface-visibility: hidden;
+  color: oklch(0.16 0.01 55);
   font-weight: 700;
 }
 .face-num {
@@ -247,16 +260,17 @@ input { font: inherit; color: inherit; }
   width: 22%; height: 22%;
   transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: oklch(0.18 0.01 60);
+  background: var(--pip, oklch(0.18 0.01 60));
 }
 
-/* face tint per die type */
-.die-rotator.die-d6 .face { background: linear-gradient(145deg, oklch(0.95 0.01 80), oklch(0.85 0.01 70)); }
-.die-rotator.die-d8 .face { background: linear-gradient(145deg, oklch(0.93 0.04 45) 0%, oklch(0.78 0.06 45) 100%); }
+/* face tint per die type — hue is baked into --shade by the JS */
+.die-rotator.die-d6 .face { background: var(--shade); }
+.die-rotator.die-d8 .face,
 .die-rotator.die-d10 .face,
-.die-rotator.die-d10t .face { background: linear-gradient(145deg, oklch(0.93 0.03 300) 0%, oklch(0.76 0.05 300) 100%); }
-.die-rotator.die-d12 .face { background: linear-gradient(145deg, oklch(0.93 0.035 160) 0%, oklch(0.76 0.05 160) 100%); }
-.die-rotator.die-d20 .face { background: linear-gradient(145deg, oklch(0.93 0.04 20) 0%, oklch(0.78 0.05 20) 100%); }
+.die-rotator.die-d10t .face,
+.die-rotator.die-d12 .face,
+.die-rotator.die-d20 .face,
+.die-rotator.die-d4 .face { background: var(--shade); }
 
 /* ---------------- tray ---------------- */
 .tray {
@@ -290,11 +304,12 @@ input { font: inherit; color: inherit; }
 }
 @keyframes slide-down { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
 .chip {
-  padding: 6px 12px;
+  padding: 6px 14px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   font-size: 13px; font-weight: 500;
   color: var(--text-muted);
+  white-space: nowrap;
   transition: border-color 150ms ease-out, color 150ms ease-out, background 150ms ease-out;
 }
 .chip:hover { border-color: var(--accent); color: var(--text); background: oklch(1 0 0 / 0.04); }
@@ -302,6 +317,12 @@ input { font: inherit; color: inherit; }
 
 /* die tray */
 .die-tray { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
+@media (max-width: 720px) {
+  .die-tray { grid-template-columns: repeat(4, 1fr); }
+}
+@media (max-width: 560px) {
+  .die-tray { grid-template-columns: repeat(4, 1fr); }
+}
 .die-btn {
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   padding: 10px 4px;
@@ -499,7 +520,6 @@ input { font: inherit; color: inherit; }
   body { font-size: 14px; }
   .workbench { padding: var(--s4); gap: 12px; }
   .readout-value { font-size: 28px; }
-  .die-tray { grid-template-columns: repeat(4, 1fr); }
   .readout-detail { max-width: 60vw; }
 }
 
