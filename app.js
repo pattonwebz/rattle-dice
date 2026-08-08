@@ -1112,31 +1112,56 @@ function closePanels() {
 }
 
 /* ---------------- shake to reroll ---------------- */
+// Detects a deliberate double-shake: two shake gestures within a short
+// window. A single gesture can contain several motion spikes (a real shake
+// bounces), so spikes are grouped into gestures by a spike gap, and a roll
+// fires only when two gestures land inside the GESTURE_WINDOW.
 const Shake = (() => {
   let last = null;
-  let lastTrigger = 0;
+  let lastSpike = 0;    // when the last motion spike was seen
+  let awaitingSecond = false; // first gesture seen, waiting for the second
+  let firstGestureAt = 0;
+  let cooldownUntil = 0; // after a fire, ignore everything briefly
   let listening = false;
-  const THRESHOLD = 22; // delta g
-  const DEBOUNCE_MS = 500;
+  const THRESHOLD = 22;       // delta g to count as a spike
+  const SPIKE_GAP_MS = 250;   // spikes closer than this = same gesture
+  const GESTURE_WINDOW_MS = 1200; // second gesture must land within this
+  const FIRE_COOLDOWN_MS = 1000;  // ignore motion right after a fire
 
   function onMotion(e) {
     const acc = e.accelerationIncludingGravity;
     if (!acc || !state.shake) return;
     const now = Date.now();
-    // Debounce: one trigger per 500ms window. A single quick shake produces
-    // a few motion spikes within ~100ms, so only the first can fire.
-    if (now - lastTrigger < DEBOUNCE_MS) return;
+    if (now < cooldownUntil) return;
     if (!last) { last = { x: acc.x || 0, y: acc.y || 0, z: acc.z || 0 }; return; }
     const dx = Math.abs((acc.x || 0) - last.x);
     const dy = Math.abs((acc.y || 0) - last.y);
     const dz = Math.abs((acc.z || 0) - last.z);
-    // Always refresh the baseline first, so a roll in progress never leaves
-    // a stale pre-shake reading that re-fires after the roll ends.
+    // Always refresh the baseline so a roll in progress never leaves a
+    // stale pre-shake reading that re-fires after the roll ends.
     last = { x: acc.x || 0, y: acc.y || 0, z: acc.z || 0 };
     if (state.rolling) return;
-    if (dx + dy + dz > THRESHOLD) {
-      lastTrigger = now;
+    const delta = dx + dy + dz;
+    if (delta <= THRESHOLD) return;
+    const inSameGesture = (now - lastSpike) < SPIKE_GAP_MS;
+    lastSpike = now;
+    if (inSameGesture) return; // more spikes of the same gesture
+    // This is the start of a new gesture.
+    if (!awaitingSecond) {
+      // first gesture of a potential pair
+      awaitingSecond = true;
+      firstGestureAt = now;
+      return;
+    }
+    // second gesture: fire only if within the window
+    if (now - firstGestureAt <= GESTURE_WINDOW_MS) {
+      awaitingSecond = false;
+      cooldownUntil = now + FIRE_COOLDOWN_MS;
       doRoll(state.lastRollExpr);
+    } else {
+      // too slow: treat this as a fresh first gesture
+      awaitingSecond = true;
+      firstGestureAt = now;
     }
   }
 
