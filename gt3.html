@@ -1,0 +1,46 @@
+<!doctype html><html><head><link rel="stylesheet" href="styles.css"></head><body>
+<div id="stage" style="position:relative;width:500px;height:400px;background:#241f1a;"><div id="dice-field" style="position:absolute;inset:0;perspective:1000px;"></div></div>
+<script src="app.js"></script>
+<script>
+function run() {
+  const field = document.getElementById('dice-field');
+  // For a single die settled at center, find the face painted on top by
+  // checking which face's projected polygon contains the center point,
+  // then pick the one with the SMALLEST distance to the viewer (nearest).
+  // distance from viewer (z=0 at face plane): world z of face centroid.
+  function topFace(it, t) {
+    const S = it.settle;
+    // world normal and centroid of each face under the settle
+    let best = null, bestZ = -Infinity;
+    for (const f of GEOMETRY[it.type === 'd10t' ? 'd10t' : it.rot.className.includes('d10t') ? 'd10t' : it.rot.className.replace('die-rotator die-', '')].faces) {
+      // centroid
+      const c = f.verts.reduce((a, v) => [a[0]+v[0], a[1]+v[1], a[2]+v[2]], [0,0,0]).map(x => x / f.verts.length);
+      // world centroid = S * c (row-vector convention)
+      const wc = [
+        S[0][0]*c[0] + S[0][1]*c[1] + S[0][2]*c[2],
+        S[1][0]*c[0] + S[1][1]*c[1] + S[1][2]*c[2],
+        S[2][0]*c[0] + S[2][1]*c[1] + S[2][2]*c[2]
+      ];
+      if (wc[2] > bestZ) { bestZ = wc[2]; best = f.value; }
+    }
+    return best;
+  }
+  const results = {};
+  for (const t of ['d6','d20']) {
+    let match = 0, n = 200;
+    for (let i = 0; i < n; i++) {
+      field.innerHTML = '';
+      const v = rollExpression(parseExpr('1' + t)).groups[0].dies[0].value;
+      const it = buildDie(t, v, 110);
+      it.actor.style.setProperty('--die-size', '110px');
+      field.appendChild(it.actor);
+      settleActor(it.actor, it.rot, it.settle, { x: 0, y: 0 });
+      const top = topFace(it);
+      if (top === v) match++;
+    }
+    results[t] = match + '/' + n;
+  }
+  console.log('ROW-CONV ' + JSON.stringify(results));
+}
+run();
+</script></body></html>

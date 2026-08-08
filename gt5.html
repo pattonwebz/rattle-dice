@@ -1,0 +1,17 @@
+<!doctype html><html><head></head><body>
+<script src="app.js"></script>
+<script>
+function run() {
+  const d20 = GEOMETRY.d20;
+  // For values 11-16, what is the face normal?
+  for (const v of [11, 12, 15, 16]) {
+    const f = d20.faces.find(x => x.value === v);
+    const n = f.n;
+    const R = alignMatrix(n, [0, 0, 1]);
+    // row-vector convention: world = R * n should be [0,0,1]
+    const w = [R[0][0]*n[0]+R[0][1]*n[1]+R[0][2]*n[2], R[1][0]*n[0]+R[1][1]*n[1]+R[1][2]*n[2], R[2][0]*n[0]+R[2][1]*n[1]+R[2][2]*n[2]];
+    console.log('v=' + v + ' n=' + n.map(x => +x.toFixed(3)).join(',') + ' align(n)->z=' + w[2].toFixed(4) + ' full=' + w.map(x => +x.toFixed(3)).join(','));
+  }
+}
+run();
+</script></body></html>

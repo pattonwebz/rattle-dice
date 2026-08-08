@@ -1,0 +1,30 @@
+<!doctype html><html><head></head><body>
+<script src="app.js"></script>
+<script>
+function run() {
+  const d20 = GEOMETRY.d20;
+  const failByValue = {};
+  let n = 400;
+  for (let i = 0; i < n; i++) {
+    const v = rollExpression(parseExpr('1d20')).groups[0].dies[0].value;
+    const it = buildDie('d20', v, 110);
+    const S = it.settle;
+    let top = null, bestZ = -Infinity;
+    for (const f of d20.faces) {
+      const c = f.verts.reduce((a, p) => [a[0]+p[0], a[1]+p[1], a[2]+p[2]], [0,0,0]).map(x => x / f.verts.length);
+      const wc = [S[0][0]*c[0]+S[0][1]*c[1]+S[0][2]*c[2], S[1][0]*c[0]+S[1][1]*c[1]+S[1][2]*c[2], S[2][0]*c[0]+S[2][1]*c[1]+S[2][2]*c[2]];
+      if (wc[2] > bestZ) { bestZ = wc[2]; top = f.value; }
+    }
+    if (top !== v) {
+      const tf = d20.faces.find(f => f.value === v);
+      const c = tf.verts.reduce((a, p) => [a[0]+p[0], a[1]+p[1], a[2]+p[2]], [0,0,0]).map(x => x / tf.verts.length);
+      const wc = [S[0][0]*c[0]+S[0][1]*c[1]+S[0][2]*c[2], S[1][0]*c[0]+S[1][1]*c[1]+S[1][2]*c[2], S[2][0]*c[0]+S[2][1]*c[1]+S[2][2]*c[2]];
+      if (!failByValue[v]) failByValue[v] = { count: 0, z: [] };
+      failByValue[v].count++;
+      if (failByValue[v].z.length < 2) failByValue[v].z.push(+wc[2].toFixed(3));
+    }
+  }
+  console.log('D20-FAILS ' + JSON.stringify(failByValue));
+}
+run();
+</script></body></html>

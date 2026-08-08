@@ -75,6 +75,15 @@ function tetraFaces() {
   const s = 1 / Math.sqrt(3);
   const A = [s, s, s], B = [s, -s, -s], C = [-s, s, -s], D = [-s, -s, s];
   const faces = [[A, B, C], [A, B, D], [A, C, D], [B, C, D]];
+  // A real d4 reads its value from the top vertex. Each vertex touches 3
+  // faces, and the vertex's value is the number of the face it does NOT
+  // touch. So for faces f0..f3 (values 1..4):
+  //   vertex A (touches f0,f1,f2) -> value 4
+  //   vertex B (touches f0,f1,f3) -> value 3
+  //   vertex C (touches f0,f2,f3) -> value 2
+  //   vertex D (touches f1,f2,f3) -> value 1
+  // Every face shows its OWN value at its 3 vertices; when the die rests,
+  // the top vertex shows the rolled number on all three visible faces.
   return faces.map((f, i) => {
     const n = faceNormal(f);
     return { value: i + 1, label: String(i + 1), n, dist: V.dot(n, f[0]), verts: f };
@@ -152,25 +161,42 @@ function dodecaFaces() {
     const dots = verts
       .map((v, i) => ({ v, d: V.dot(v, n) }))
       .sort((a, b) => b.d - a.d);
-    const faceVerts = dots.slice(0, 5).map(x => x.v);
-    const dist = V.dot(n, faceVerts[0]);
+    // All 5 face corners share the same dot value (they are coplanar);
+    // take every vertex within epsilon of the max so float noise never
+    // drops a corner.
+    const max = dots[0].d;
+    const faceVerts = dots.filter(x => x.d > max - 1e-6).map(x => x.v);
+    const dist = max;
     return { n, dist, verts: faceVerts };
   });
 }
 
-// Build the 20 faces of an icosahedron. Face normals point at the 20
-// vertices of a dual dodecahedron (dodecaDirs); each face contains the 3
-// icosahedron vertices (icosaDirs) nearest to that direction.
+// Build the 20 faces of an icosahedron directly from its 12 vertices.
+// Each face is a triangle of three pairwise-adjacent vertices; adjacency
+// is the icosahedron edge length. This yields exactly 20 coplanar faces.
 function icosaFaces() {
-  const faceDirs = dodecaDirs();      // 20 dodeca vertices = icosa face normals
-  const verts = icosaDirs();          // 12 icosa vertices
-  return faceDirs.map(n => {
-    const dots = verts
-      .map(v => ({ v, d: V.dot(v, n) }))
-      .sort((a, b) => b.d - a.d);
-    const faceVerts = dots.slice(0, 3).map(x => x.v);
-    const dist = V.dot(n, faceVerts[0]);
-    return { n, dist, verts: faceVerts };
+  const verts = icosaDirs();
+  const edgeLen = V.dot(verts[0], verts[1]); // cos between adjacent verts
+  const faces = [];
+  const seen = new Set();
+  for (let a = 0; a < verts.length; a++) {
+    for (let b = a + 1; b < verts.length; b++) {
+      if (Math.abs(V.dot(verts[a], verts[b]) - edgeLen) > 1e-6) continue;
+      for (let c = b + 1; c < verts.length; c++) {
+        if (Math.abs(V.dot(verts[a], verts[c]) - edgeLen) > 1e-6) continue;
+        if (Math.abs(V.dot(verts[b], verts[c]) - edgeLen) > 1e-6) continue;
+        const key = [a, b, c].sort((x, y) => x - y).join(',');
+        if (seen.has(key)) continue;
+        seen.add(key);
+        faces.push({ a, b, c });
+      }
+    }
+  }
+  return faces.map(({ a, b, c }) => {
+    const tri = [verts[a], verts[b], verts[c]];
+    const n = faceNormal(tri);
+    const dist = V.dot(n, tri[0]);
+    return { n, dist, verts: tri };
   });
 }
 
@@ -248,10 +274,11 @@ function trapezoFaces(tens) { // pentagonal trapezohedron via antiprism dual
   });
 }
 
+// Project the face's 3D vertices into the face element's own local frame
+// (the face element is rotated by alignMatrix(n, [0,0,1]) so +Z = normal).
+// Returns { poly, w, h } where poly is the clip-path polygon in percent
+// coordinates and w/h are the face's full extent in the die's unit space.
 function polyPoints(n, verts) {
-  // Project the face's 3D vertices into the face element's own local frame.
-  // The face element is rotated by alignMatrix(n, [0,0,1]) so its +Z is the
-  // face normal; X/Y in that frame are the first two rows of the matrix.
   const M = alignMatrix(n, [0, 0, 1]);
   const pts = verts.map(v => {
     const x = M[0][0] * v[0] + M[0][1] * v[1] + M[0][2] * v[2];
@@ -260,24 +287,46 @@ function polyPoints(n, verts) {
   });
   const c = [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
   const sorted = pts.map(p => ({ p, a: Math.atan2(p[1] - c[1], p[0] - c[0]) })).sort((a, b) => a.a - b.a).map(x => x.p);
-  let max = 0;
-  for (const p of sorted) max = Math.max(max, Math.abs(p[0]), Math.abs(p[1]));
-  max *= 1.02;
-  return sorted.map(p => `${((p[0] / max + 1) * 50).toFixed(2)}% ${((p[1] / max + 1) * 50).toFixed(2)}%`).join(', ');
+  let maxX = 0, maxY = 0;
+  for (const p of sorted) { maxX = Math.max(maxX, Math.abs(p[0])); maxY = Math.max(maxY, Math.abs(p[1])); }
+  const pad = 1.04;
+  const w = maxX * 2 * pad, h = maxY * 2 * pad;
+  const poly = sorted.map(p => `${((p[0] / w + 0.5) * 100).toFixed(2)}% ${((p[1] / h + 0.5) * 100).toFixed(2)}%`).join(', ');
+  return { poly, w, h };
 }
 
 const GEOMETRY = (() => {
   const base = {
-    d4: { faces: tetraFaces(), panel: 0.92 },
-    d6: { faces: cubeFaces(), panel: 1 },
-    d8: { faces: octaFaces(), panel: 0.8 },
-    d10: { faces: trapezoFaces(false), panel: 0.56 },
-    d12: { faces: assignOpposites(dodecaFaces()), panel: 0.5 },
-    d20: { faces: assignOpposites(icosaFaces()), panel: 0.52 }
+    d4: { faces: tetraFaces() },
+    d6: { faces: cubeFaces() },
+    d8: { faces: octaFaces() },
+    d10: { faces: trapezoFaces(false) },
+    d12: { faces: assignOpposites(dodecaFaces()) },
+    d20: { faces: assignOpposites(icosaFaces()) }
   };
-  base.d10t = { faces: trapezoFaces(true), panel: 0.56 };
+  base.d10t = { faces: trapezoFaces(true) };
   for (const key of Object.keys(base)) {
-    for (const f of base[key].faces) f.poly = polyPoints(f.n, f.verts);
+    for (const f of base[key].faces) {
+      const pp = polyPoints(f.n, f.verts);
+      f.poly = pp.poly;
+      f.w = pp.w;
+      f.h = pp.h;
+      // d4: place the label at the corner that carries this face's value.
+      // The value vertex is the tetrahedron vertex not on this face; the
+      // other three faces all share it. Project it into this face's frame.
+      if (key === 'd4') {
+        const s = 1 / Math.sqrt(3);
+        const vertsAll = [
+          [s, s, s], [s, -s, -s], [-s, s, -s], [-s, -s, s]
+        ];
+        const onFace = v => f.verts.some(fv => fv.every((c, i) => Math.abs(c - v[i]) < 1e-9));
+        const apex = vertsAll.find(v => !onFace(v));
+        const M = alignMatrix(f.n, [0, 0, 1]);
+        const ax = M[0][0] * apex[0] + M[0][1] * apex[1] + M[0][2] * apex[2];
+        const ay = M[1][0] * apex[0] + M[1][1] * apex[1] + M[1][2] * apex[2];
+        f.corner = [((ax / f.w + 0.5) * 100), ((ay / f.h + 0.5) * 100)];
+      }
+    }
   }
   return base;
 })();
@@ -438,15 +487,20 @@ function buildFaceEl(face, dieType, size, worldN) {
   const el = document.createElement('div');
   el.className = 'face';
   el.dataset.value = face.value;
-  const panel = size * (GEOMETRY[dieType] ? GEOMETRY[dieType].panel : 0.8);
-  el.style.width = el.style.height = panel.toFixed(1) + 'px';
-  el.style.marginLeft = el.style.marginTop = (-panel / 2).toFixed(1) + 'px';
+  // Panel is sized to the face's own bounding box so adjacent faces meet
+  // exactly (no seams). face.w/h are in die-unit space; scale by size/2.
+  const w = Math.max(1e-3, (face.w || 1) * size / 2);
+  const h = Math.max(1e-3, (face.h || 1) * size / 2);
+  el.style.width = w.toFixed(1) + 'px';
+  el.style.height = h.toFixed(1) + 'px';
+  el.style.marginLeft = (-w / 2).toFixed(1) + 'px';
+  el.style.marginTop = (-h / 2).toFixed(1) + 'px';
   const M = alignMatrix(face.n, [0, 0, 1]);
   const tz = face.dist * size / 2;
   el.style.transform = `${toMatrix3d(M)} translateZ(${tz.toFixed(2)}px)`;
   if (face.poly) el.style.clipPath = `polygon(${face.poly})`;
   el.style.setProperty('--shade', faceShade(worldN || face.n, dieType));
-  el.innerHTML = faceHTML(face, dieType, panel, worldN);
+  el.innerHTML = faceHTML(face, dieType, Math.max(w, h), worldN);
   return el;
 }
 
@@ -461,14 +515,22 @@ function faceHTML(face, dieType, panel, worldN) {
     const pips = PIPS[face.value] || [];
     const onDark = worldN ? V.dot(worldN, LIGHT_DIR) < -0.1 : false;
     const pipColor = onDark ? 'rgba(240,240,240,0.92)' : 'rgba(20,20,18,0.92)';
-    return `<span class="pips" style="--pip:${pipColor}">${pips.map(p => `<i style="left:${p[0] * 50}%;top:${p[1] * 50}%"></i>`).join('')}</span>`;
+    // Real dice inset pips from the face edges (~15% of face size). Map the
+    // 0..2 grid to 15%..85% so corner pips sit comfortably inside the face.
+    return `<span class="pips" style="--pip:${pipColor}">${pips.map(p => `<i style="left:${(p[0] * 35 + 15).toFixed(1)}%;top:${(p[1] * 35 + 15).toFixed(1)}%"></i>`).join('')}</span>`;
   }
   const fs = Math.max(10, panel * 0.34);
   const onDark = worldN ? V.dot(worldN, LIGHT_DIR) < -0.1 : false;
   const color = onDark ? '#f2efe8' : '#1a1a16';
+  // On a real d4 the value is printed near each face's "apex" corner, and
+  // the top vertex shows the rolled number on all three visible faces. We
+  // center the label near the corner that is farthest from the face's
+  // centroid along the projection of that apex vertex.
+  if (dieType === 'd4' && face.corner) {
+    return `<span class="face-num" style="font-size:${fs.toFixed(0)}px;color:${color};position:absolute;left:${face.corner[0].toFixed(0)}%;top:${face.corner[1].toFixed(0)}%;transform:translate(-50%,-50%)">${face.label}</span>`;
+  }
   return `<span class="face-num" style="font-size:${fs.toFixed(0)}px;color:${color}">${face.label}</span>`;
 }
-
 function settleMatrix(face) {
   // The browser's world transform of a face normal is S^T * n (matrix3d
   // emits rows as columns). We want the target face's world normal to be
@@ -477,6 +539,15 @@ function settleMatrix(face) {
   // Verified empirically: S = spin * R maps n_target to exactly [0,0,1],
   // while S = R * spin tilts it. (Verified for d20 and d8 in headless run.)
   const R = alignMatrix(face.n, [0, 0, 1]);
+  const spin = rotMatrix([0, 0, 1], rand() * Math.PI * 2);
+  return mul3(spin, R);
+}
+
+// A d4 rests on one face with the opposite vertex up; the rolled value is
+// read from that top vertex. The vertex for value v is opposite face v, so
+// settle with face v's normal pointing DOWN ([0,0,-1]).
+function settleD4(face, geo) {
+  const R = alignMatrix(face.n, [0, 0, -1]);
   const spin = rotMatrix([0, 0, 1], rand() * Math.PI * 2);
   return mul3(spin, R);
 }
@@ -501,13 +572,13 @@ function buildDie(type, value, size) {
   const face = g.faces.find(f => f.value === value) || g.faces[0];
   // Decide the settle rotation first so face shading matches the final
   // world orientation (light from above stays consistent after the roll).
-  const settle = settleMatrix(face);
+  const settle = type === 'd4' ? settleD4(face, g) : settleMatrix(face);
   for (const f of g.faces) {
     const worldN = applyMatrix(settle, f.n);
     rot.appendChild(buildFaceEl(f, type, size, worldN));
   }
   actor.appendChild(rot);
-  return { actor, rot, settle, size };
+  return { actor, rot, settle, size, geo: g };
 }
 
 /* ---------------- sound ---------------- */
@@ -614,7 +685,36 @@ function layoutPositions(count, size, { w, h }) {
 const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
 const EASE_LAND = 'cubic-bezier(0.34, 1.4, 0.5, 1)';
 
-function settleActor(actor, rot, settle, t) {
+// Apply the settle rotation to the die's faces: hide back-facing faces and
+// reorder the remaining faces back-to-front so the browser paints a solid
+// die. (CSS backface-visibility is unreliable across browsers, so we do the
+// painter's algorithm ourselves.)
+function poseDie(rot, settle, geo) {
+  const faces = [...rot.querySelectorAll('.face')];
+  const posed = [];
+  for (const f of faces) {
+    const geoFace = geo && geo.faces.find(x => x.value === parseInt(f.dataset.value, 10));
+    const n = geoFace ? geoFace.n : [0, 0, 1];
+    // world normal under row-vector convention: S * n
+    const wn = [
+      settle[0][0] * n[0] + settle[0][1] * n[1] + settle[0][2] * n[2],
+      settle[1][0] * n[0] + settle[1][1] * n[1] + settle[1][2] * n[2],
+      settle[2][0] * n[0] + settle[2][1] * n[1] + settle[2][2] * n[2]
+    ];
+    // centroid world z (viewer distance)
+    const c = geoFace ? geoFace.verts.reduce((a, p) => [a[0] + p[0], a[1] + p[1], a[2] + p[2]], [0, 0, 0]).map(x => x / geoFace.verts.length) : [0, 0, 0];
+    const wz = settle[2][0] * c[0] + settle[2][1] * c[1] + settle[2][2] * c[2];
+    const facing = wn[2] > 0.05; // toward viewer
+    posed.push({ el: f, wz, facing });
+  }
+  // Hide back faces; keep front faces sorted near-to-far so far faces paint
+  // first and near faces paint last (on top).
+  for (const p of posed) p.el.style.visibility = p.facing ? 'visible' : 'hidden';
+  posed.sort((a, b) => (a.facing === b.facing) ? (a.wz - b.wz) : (a.facing ? 1 : -1));
+  for (const p of posed) rot.appendChild(p.el); // reorder
+}
+
+function settleActor(actor, rot, settle, t, geo) {
   // Cancel any running/filled animations so inline styles win the cascade.
   for (const el of [actor, rot]) {
     if (el.getAnimations) el.getAnimations().forEach(a => a.cancel());
@@ -622,6 +722,7 @@ function settleActor(actor, rot, settle, t) {
   rot.style.transform = toMatrix3d(settle);
   actor.style.transform = `translate(-50%, -50%) translate(${t.x}px,${t.y}px) scale(1)`;
   actor.style.opacity = '1';
+  poseDie(rot, settle, geo);
 }
 
 function animateRoll(items, mode) {
@@ -639,7 +740,7 @@ function animateRoll(items, mode) {
     const delay = i * 90 + rand() * 70;
 
     if (eff === 'none') {
-      settleActor(actor, rot, settle, t);
+      settleActor(actor, rot, settle, t, item.geo);
       return;
     }
 
@@ -655,7 +756,7 @@ function animateRoll(items, mode) {
         { transform: `${actorBase} translate(0px,0px) scale(1.03)`, opacity: 1, offset: 0.85, easing: EASE_LAND },
         { transform: `${actorBase} translate(0px,0px) scale(1)`, opacity: 1, offset: 1 }
       ], { duration: 850 + delay, delay, fill: 'both' });
-      Promise.all([rotAnim.finished, actorAnim.finished]).then(() => settleActor(actor, rot, settle, { x: 0, y: 0 })).catch(() => {});
+      Promise.all([rotAnim.finished, actorAnim.finished]).then(() => settleActor(actor, rot, settle, { x: 0, y: 0 }, item.geo)).catch(() => {});
       return;
     }
 
@@ -675,7 +776,7 @@ function animateRoll(items, mode) {
       { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1.1)`, offset: 0.85, easing: EASE_LAND },
       { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1)`, offset: 1 }
     ], { duration: 1350 + delay, delay, fill: 'both' });
-    Promise.all([rotAnim.finished, actorAnim.finished]).then(() => settleActor(actor, rot, settle, t)).catch(() => {});
+    Promise.all([rotAnim.finished, actorAnim.finished]).then(() => settleActor(actor, rot, settle, t, item.geo)).catch(() => {});
     window.setTimeout(() => Sound.thud(), 900 + delay + rand() * 300);
   });
   return targets;
@@ -817,7 +918,7 @@ function doRoll(exprStr) {
     state.rolling = false;
     // force final settled state so dice are always visible after a roll
     items.forEach((item, i) => {
-      settleActor(item.actor, item.rot, item.settle, targets[i] || { x: 0, y: 0 });
+      settleActor(item.actor, item.rot, item.settle, targets[i] || { x: 0, y: 0 }, item.geo);
     });
     renderReadout(parsed, roll);
     pushHistory(parsed, roll);

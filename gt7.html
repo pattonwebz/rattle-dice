@@ -1,0 +1,52 @@
+<!doctype html><html><head></head><body>
+<script src="app.js"></script>
+<script>
+function run() {
+  // A proper icosahedron: 12 vertices, 20 faces. Check my icosaDirs count and
+  // that each face's vertices are equidistant from the face normal plane.
+  const verts = icosaDirs();
+  console.log('icosaDirs count=' + verts.length);
+  const dodeca = dodecaDirs();
+  console.log('dodecaDirs count=' + dodeca.length);
+  // For the real icosahedron, the 12 vertices are:
+  // (0, ±1, ±φ), (±1, ±φ, 0), (±φ, 0, ±1)
+  const phi = (1 + Math.sqrt(5)) / 2;
+  const realVerts = [];
+  for (const s of [1, -1]) {
+    for (const t of [1, -1]) {
+      realVerts.push([0, s * 1, t * phi]);
+      realVerts.push([s * 1, t * phi, 0]);
+      realVerts.push([s * phi, 0, t * 1]);
+    }
+  }
+  // check my icosaDirs == realVerts (normalized)
+  let matchCount = 0;
+  for (const v of verts) {
+    for (const rv of realVerts) {
+      const nrv = V.norm(rv);
+      const d = Math.abs(V.dot(v, nrv));
+      if (d > 0.9999) { matchCount++; break; }
+    }
+  }
+  console.log('icosaDirs matches real icosa vertices: ' + matchCount + '/12');
+  // Same check: dodecaDirs are the 20 face normals of the icosahedron =
+  // normalized sums of adjacent triples? The 20 icosa face normals are:
+  // (±1, ±1, ±1) and (0, ±1/φ, ±φ), (±1/φ, ±φ, 0), (±φ, 0, ±1/φ)
+  const realFaceNormals = [];
+  for (const a of [1, -1]) for (const b of [1, -1]) for (const c of [1, -1]) realFaceNormals.push(V.norm([a, b, c]));
+  const r = 1 / phi;
+  for (const s of [1, -1]) for (const t of [1, -1]) {
+    realFaceNormals.push(V.norm([0, s * r, t * phi]));
+    realFaceNormals.push(V.norm([s * r, t * phi, 0]));
+    realFaceNormals.push(V.norm([t * phi, 0, s * r]));
+  }
+  let m2 = 0;
+  for (const v of dodeca) {
+    for (const rf of realFaceNormals) {
+      if (Math.abs(V.dot(v, rf)) > 0.9999) { m2++; break; }
+    }
+  }
+  console.log('dodecaDirs matches real icosa face normals: ' + m2 + '/20');
+}
+run();
+</script></body></html>

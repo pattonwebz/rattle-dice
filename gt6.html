@@ -1,0 +1,26 @@
+<!doctype html><html><head></head><body>
+<script src="app.js"></script>
+<script>
+function run() {
+  const d20 = GEOMETRY.d20;
+  const it = buildDie('d20', 15, 110);
+  const S = it.settle;
+  const f15 = d20.faces.find(x => x.value === 15);
+  const n = f15.n;
+  const w = [S[0][0]*n[0]+S[0][1]*n[1]+S[0][2]*n[2], S[1][0]*n[0]+S[1][1]*n[1]+S[1][2]*n[2], S[2][0]*n[0]+S[2][1]*n[1]+S[2][2]*n[2]];
+  console.log('S * n15 = ' + w.map(x => +x.toFixed(4)).join(','));
+  // centroid z
+  const c = f15.verts.reduce((a, p) => [a[0]+p[0], a[1]+p[1], a[2]+p[2]], [0,0,0]).map(x => x / f15.verts.length);
+  const wc = [S[0][0]*c[0]+S[0][1]*c[1]+S[0][2]*c[2], S[1][0]*c[0]+S[1][1]*c[1]+S[1][2]*c[2], S[2][0]*c[0]+S[2][1]*c[1]+S[2][2]*c[2]];
+  console.log('S * centroid15 = ' + wc.map(x => +x.toFixed(4)).join(','));
+  // what is the max-z face?
+  let best = null, bestZ = -Infinity;
+  for (const f of d20.faces) {
+    const cc = f.verts.reduce((a, p) => [a[0]+p[0], a[1]+p[1], a[2]+p[2]], [0,0,0]).map(x => x / f.verts.length);
+    const ww = [S[0][0]*cc[0]+S[0][1]*cc[1]+S[0][2]*cc[2], S[1][0]*cc[0]+S[1][1]*cc[1]+S[1][2]*cc[2], S[2][0]*cc[0]+S[2][1]*cc[1]+S[2][2]*cc[2]];
+    if (ww[2] > bestZ) { bestZ = ww[2]; best = f.value; }
+  }
+  console.log('max-z face=' + best + ' z=' + bestZ.toFixed(4));
+}
+run();
+</script></body></html>
