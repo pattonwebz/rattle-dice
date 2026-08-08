@@ -1,0 +1,31 @@
+<!doctype html><html><head><link rel="stylesheet" href="styles.css"></head><body>
+<div id="stage" style="position:relative;width:400px;height:200px;border:1px solid #555;"><div class="stage-inner"><p class="stage-empty" id="stage-empty">Pick a die</p><div class="dice-field" id="dice-field"></div><div class="table-glow" id="table-glow"></div></div></div>
+<div id="result-label"></div><div id="result-value"></div><div id="result-detail"></div>
+<div id="tray-head"></div>
+<div id="die-tray"></div>
+<div id="expr-form"><input id="expr-input"><button id="expr-roll">Roll</button></div>
+<div id="quick-select"></div><div id="quick-list"></div>
+<div id="history-panel" hidden><div id="history-list"></div><button id="history-clear"></button></div>
+<div id="settings-panel" hidden>
+  <div class="seg" id="anim-seg">
+    <label><input type="radio" name="anim" value="full"><span>Full</span></label>
+    <label><input type="radio" name="anim" value="minimal"><span>Minimal</span></label>
+    <label><input type="radio" name="anim" value="none"><span>None</span></label>
+  </div>
+  <p id="anim-hint"></p>
+  <input type="checkbox" id="roll-together"><input type="checkbox" id="sound-toggle"><input type="checkbox" id="crit-toggle"><input type="checkbox" id="fumble-toggle">
+</div>
+<div id="scrim"></div>
+<button id="history-toggle"></button><button id="settings-toggle"></button>
+<script src="app.js"></script>
+<script>
+window.addEventListener('error', e => console.log('WINDOW-ERROR ' + e.message));
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(() => {
+    console.log('INIT anim=' + state.anim);
+    const r = document.querySelector('input[name="anim"][value="minimal"]');
+    r.click();
+    console.log('AFTER anim=' + state.anim + ' checked=' + r.checked);
+  }, 300);
+});
+</script></body></html>

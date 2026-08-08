@@ -634,7 +634,6 @@ function pushHistory(parsed, roll) {
 
 function renderHistory() {
   const list = $('#history-list');
-  const count = $('#history-count');
   list.innerHTML = '';
   if (history.length === 0) {
     const li = document.createElement('li');
@@ -654,8 +653,11 @@ function renderHistory() {
     li.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); li.click(); } });
     list.appendChild(li);
   }
-  count.hidden = history.length === 0;
-  count.textContent = String(history.length);
+  const count = $('#history-count');
+  if (count) {
+    count.hidden = history.length === 0;
+    count.textContent = String(history.length);
+  }
 }
 
 /* ---------------- main roll flow ---------------- */
@@ -699,8 +701,9 @@ function doRoll(exprStr) {
   if (state.sound) Sound.tick();
   state.rolling = true;
 
-  const duration = state.anim === 'none' || window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    ? 60 : (state.anim === 'minimal' ? 950 : 1500);
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const effectiveNone = state.anim === 'none' || reduced;
+  const duration = effectiveNone ? 60 : (state.anim === 'minimal' ? 950 : 1500);
   const targets = animateRoll(items, state.anim);
 
   window.setTimeout(() => {
@@ -712,7 +715,7 @@ function doRoll(exprStr) {
     renderReadout(parsed, roll);
     pushHistory(parsed, roll);
     $('#table-glow').classList.add('is-lit');
-  }, duration + items.length * 110 + 120);
+  }, duration + (effectiveNone ? 0 : items.length * 110) + 120);
 }
 
 /* ---------------- tray ---------------- */
@@ -761,7 +764,9 @@ function updateRollTogetherBtn() {
 }
 
 /* ---------------- panels & settings ---------------- */
+let panelCloseToken = 0;
 function openPanel(id) {
+  panelCloseToken++; // cancel any pending close re-hide
   const panel = $('#' + id);
   panel.hidden = false;
   requestAnimationFrame(() => panel.classList.add('is-open'));
@@ -770,8 +775,12 @@ function openPanel(id) {
   document.body.classList.add('has-panel');
 }
 function closePanels() {
+  const token = ++panelCloseToken;
   $$('.panel').forEach(p => { p.classList.remove('is-open'); });
-  window.setTimeout(() => $$('.panel').forEach(p => { p.hidden = true; }), 220);
+  window.setTimeout(() => {
+    if (token !== panelCloseToken) return;
+    $$('.panel').forEach(p => { p.hidden = true; });
+  }, 220);
   $('#scrim').hidden = true;
   $('#history-toggle').setAttribute('aria-expanded', 'false');
   $('#settings-toggle').setAttribute('aria-expanded', 'false');
