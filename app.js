@@ -298,7 +298,7 @@ function rollDie(sides, ops) {
   let v = 1 + randInt(sides);
   if (ops.explode) {
     let guard = 0;
-    while (v === sides && guard < 40) { v += 1 + randInt(sides); guard++; }
+    while (v % sides === 0 && guard < 40) { v += 1 + randInt(sides); guard++; }
   }
   if (ops.r) { if (v === ops.r) v = 1 + randInt(sides); }
   if (ops.rr) { let guard = 0; while (v === ops.rr && guard < 100) { v = 1 + randInt(sides); guard++; } }
@@ -327,10 +327,10 @@ function rollGroup(g) {
   const { kh, kl, dh, dl } = g.ops;
   if (kh || kl || dh || dl) {
     const idx = dies.map((_, i) => i).sort((a, b) => dies[a].value - dies[b].value);
-    const drop = n => { for (let k = 0; k < n; k++) dies[idx[k]].dropped = true; };
-    const dropHigh = n => { for (let k = 0; k < n; k++) dies[idx[idx.length - 1 - k]].dropped = true; };
-    if (kh) dropHigh(Math.max(0, dies.length - kh));
-    else if (kl) drop(Math.max(0, dies.length - kl));
+    const drop = n => { for (let k = 0; k < n; k++) dies[idx[k]].dropped = true; };       // lowest
+    const dropHigh = n => { for (let k = 0; k < n; k++) dies[idx[idx.length - 1 - k]].dropped = true; }; // highest
+    if (kh) drop(Math.max(0, dies.length - kh));       // keep highest: drop lowest N-kh
+    else if (kl) dropHigh(Math.max(0, dies.length - kl)); // keep lowest: drop highest N-kl
     else if (dh) dropHigh(dh);
     else if (dl) drop(dl);
     for (const d of dies) if (d.dropped) d.kept = false;
