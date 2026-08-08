@@ -77,16 +77,24 @@ function tetraFaces() {
   const faces = [[A, B, C], [A, B, D], [A, C, D], [B, C, D]];
   // A real d4 reads its value from the top vertex. Each vertex touches 3
   // faces, and the vertex's value is the number of the face it does NOT
-  // touch. So for faces f0..f3 (values 1..4):
+  // touch:
   //   vertex A (touches f0,f1,f2) -> value 4
   //   vertex B (touches f0,f1,f3) -> value 3
   //   vertex C (touches f0,f2,f3) -> value 2
   //   vertex D (touches f1,f2,f3) -> value 1
-  // Every face shows its OWN value at its 3 vertices; when the die rests,
-  // the top vertex shows the rolled number on all three visible faces.
+  // Each face displays the value of each of its 3 corners (a real d4 prints
+  // the same number near each corner), so when the die rests, all three
+  // visible faces show the rolled value at the top vertex.
+  const vertexVal = v => {
+    // the value of a vertex = index+1 of the face NOT containing it
+    const idx = faces.findIndex(f => !f.some(fv => fv.every((c, i) => Math.abs(c - v[i]) < 1e-9)));
+    return idx + 1;
+  };
   return faces.map((f, i) => {
     const n = faceNormal(f);
-    return { value: i + 1, label: String(i + 1), n, dist: V.dot(n, f[0]), verts: f };
+    // corners: for each vertex of this face, its value
+    const corners = f.map(v => vertexVal(v));
+    return { value: i + 1, label: String(i + 1), corners, n, dist: V.dot(n, f[0]), verts: f };
   });
 }
 
@@ -241,52 +249,48 @@ function assignOpposites(faces) {
   return out;
 }
 
-function trapezoFaces(tens) { // pentagonal trapezohedron via antiprism dual
-  const n = 5, h = 0.53;
+// Pentagonal trapezohedron (d10): all vertices on the unit sphere, two
+// apices at the poles and two rings of five vertices at latitudes +a/-a
+// offset by 36°. At latitude a = 6.06017° the kite faces are exactly
+// planar, giving a watertight, fair die shape.
+function trapezoFaces(tens) {
+  const n = 5;
+  const lat = 6.06017 * Math.PI / 180;
+  const c = Math.cos(lat), s = Math.sin(lat);
   const U = [], L = [];
   for (let k = 0; k < n; k++) {
     const a = 2 * Math.PI * k / n;
-    U.push([Math.cos(a), Math.sin(a), h]);
-    L.push([Math.cos(a + Math.PI / n), Math.sin(a + Math.PI / n), -h]);
+    U.push([c * Math.cos(a), c * Math.sin(a), s]);
+    L.push([c * Math.cos(a + Math.PI / n), c * Math.sin(a + Math.PI / n), -s]);
   }
-  const primal = [
-    { v: U.slice(), kind: 'pentTop' },
-    { v: L.slice(), kind: 'pentBot' }
-  ];
+  const N = [0, 0, 1], S = [0, 0, -1];
+  const faces = [];
   for (let k = 0; k < n; k++) {
-    primal.push({ v: [U[k], U[(k + 1) % n], L[k]], kind: 'tT' + k });
-    primal.push({ v: [L[k], L[(k + 1) % n], U[(k + 1) % n]], kind: 'tB' + k });
+    faces.push({ verts: [N, U[k], L[k], U[(k + 1) % n]] });
+    faces.push({ verts: [S, L[(k + 1) % n], U[(k + 1) % n], L[k]] });
   }
-  const dv = {};
-  for (const f of primal) dv[f.kind] = faceNormal(f.v);
-  const kiteKeys = [];
-  for (let k = 0; k < n; k++) {
-    kiteKeys.push(['pentTop', 'tT' + ((k - 1 + n) % n), 'tT' + k, 'tB' + ((k - 1 + n) % n)]);
-    kiteKeys.push(['pentBot', 'tT' + k, 'tB' + ((k - 1 + n) % n), 'tB' + k]);
-  }
-  const faces = kiteKeys.map(keys => {
-    const pts = keys.map(k => dv[k]);
-    const nrm = faceNormal(pts);
-    return { pts, n: nrm, dist: V.dot(nrm, pts[0]) };
+  const out = faces.map(f => {
+    const nrm = faceNormal(f.verts);
+    return { ...f, n: nrm, dist: V.dot(nrm, f.verts[0]) };
   });
   // pair faces by opposing normals, assign 0-4 to one side, 9-5 to the other
-  const values = new Array(faces.length).fill(-1);
+  const values = new Array(out.length).fill(-1);
   let low = 0, high = 2 * n - 1;
-  for (let i = 0; i < faces.length; i++) {
+  for (let i = 0; i < out.length; i++) {
     if (values[i] !== -1) continue;
     let opp = -1, best = 0;
-    for (let j = i + 1; j < faces.length; j++) {
-      const d = V.dot(faces[i].n, faces[j].n);
+    for (let j = i + 1; j < out.length; j++) {
+      const d = V.dot(out[i].n, out[j].n);
       if (d < best) { best = d; opp = j; }
     }
     values[i] = low;
     if (opp >= 0) values[opp] = high;
     low++; high--;
   }
-  return faces.map((f, i) => {
+  return out.map((f, i) => {
     const value = values[i];
     const label = tens ? String(value * 10).padStart(2, '0') : String(value);
-    return { ...f, value, label, verts: f.pts };
+    return { ...f, value, label };
   });
 }
 
@@ -631,8 +635,10 @@ const state = {
   sound: true,
   crit: true,
   fumble: true,
+  shake: true,
   selected: new Set(),
-  rolling: false
+  rolling: false,
+  lastRollExpr: '1d20'
 };
 
 const store = {
@@ -644,7 +650,8 @@ const store = {
         together: !!s.together,
         sound: s.sound !== false,
         crit: s.crit !== false,
-        fumble: s.fumble !== false
+        fumble: s.fumble !== false,
+        shake: s.shake !== false
       });
     } catch (e) { /* defaults */ }
   },
@@ -652,7 +659,7 @@ const store = {
     try {
       localStorage.setItem('rattle-settings', JSON.stringify({
         anim: state.anim, together: state.together, sound: state.sound,
-        crit: state.crit, fumble: state.fumble
+        crit: state.crit, fumble: state.fumble, shake: state.shake
       }));
     } catch (e) { /* storage full */ }
   }
@@ -758,7 +765,31 @@ function renderSettledDie(actor, settle, geo) {
     poly.setAttribute('stroke', 'oklch(0.45 0.02 60 / 0.9)');
     poly.setAttribute('stroke-width', '0.8');
     // face label
-    if (f.label !== undefined) {
+    if (f.corners && actor._dieType === 'd4') {
+      // d4: draw each corner's value near its vertex (inset toward center).
+      const wrap = document.createElementNS(NS, 'g');
+      wrap.appendChild(poly);
+      const pts2 = f.verts.map(project);
+      const cx = pts2.reduce((s, p) => s + p.x, 0) / pts2.length;
+      const cy = pts2.reduce((s, p) => s + p.y, 0) / pts2.length;
+      f.corners.forEach((val, i) => {
+        const v = pts2[i];
+        const inset = 0.25; // fraction of the way from corner to center
+        const lx = v.x + (cx - v.x) * inset;
+        const ly = v.y + (cy - v.y) * inset;
+        const label = document.createElementNS(NS, 'text');
+        label.setAttribute('x', lx.toFixed(1));
+        label.setAttribute('y', ly.toFixed(1));
+        label.setAttribute('text-anchor', 'middle');
+        label.setAttribute('dominant-baseline', 'central');
+        label.setAttribute('font-size', (size * 0.11).toFixed(1));
+        label.setAttribute('font-weight', 'bold');
+        label.setAttribute('fill', 'oklch(0.16 0.01 55)');
+        label.textContent = String(val);
+        wrap.appendChild(label);
+      });
+      svg.appendChild(wrap);
+    } else if (f.label !== undefined) {
       const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
       const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
       // A standalone d10's 0 reads as 10.
@@ -821,44 +852,46 @@ function animateRoll(items, mode) {
     const actorBase = `translate(-50%, -50%)`;
     const delay = i * 90 + rand() * 70;
 
+    // Render the solid projected die immediately; the animation moves this
+    // solid 2D render (never raw 3D faces, which composite badly).
+    renderSettledDie(actor, settle, item.geo);
+    rot.style.transform = 'none';
+
     if (eff === 'none') {
-      settleActor(actor, rot, settle, t, item.geo);
+      actor.style.transform = `${actorBase} translate(${t.x}px,${t.y}px) scale(1)`;
+      actor.style.opacity = '1';
       return;
     }
 
     if (eff === 'minimal') {
-      const m0 = randomRot(), m1 = randomRot();
-      const rotAnim = rot.animate([
-        { transform: toMatrix3d(m0), offset: 0, easing: 'ease-in-out' },
-        { transform: toMatrix3d(m1), offset: 0.55, easing: EASE_OUT },
-        { transform: toMatrix3d(settle), offset: 1 }
+      // spin the solid die in place at the target position
+      const turns = 1.5 + rand() * 1.5;
+      const spinAnim = actor.animate([
+        { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(0.9) rotate(0deg)`, opacity: 0, offset: 0, easing: 'ease-in-out' },
+        { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1.05) rotate(${360 * turns}deg)`, opacity: 1, offset: 0.75, easing: EASE_OUT },
+        { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1) rotate(${360 * turns}deg)`, opacity: 1, offset: 1 }
       ], { duration: 850 + delay, delay, fill: 'both' });
-      const actorAnim = actor.animate([
-        { transform: `${actorBase} translate(0px,0px) scale(0.92)`, opacity: 0, offset: 0, easing: EASE_OUT },
-        { transform: `${actorBase} translate(0px,0px) scale(1.03)`, opacity: 1, offset: 0.85, easing: EASE_LAND },
-        { transform: `${actorBase} translate(0px,0px) scale(1)`, opacity: 1, offset: 1 }
-      ], { duration: 850 + delay, delay, fill: 'both' });
-      Promise.all([rotAnim.finished, actorAnim.finished]).then(() => settleActor(actor, rot, settle, { x: 0, y: 0 }, item.geo)).catch(() => {});
+      Promise.all([spinAnim.finished]).then(() => {
+        actor.style.transform = `${actorBase} translate(${t.x}px,${t.y}px) scale(1) rotate(0deg)`;
+        actor.style.opacity = '1';
+      }).catch(() => {});
       return;
     }
 
-    // full
+    // full: fly the solid die across the stage with a spin
     const sx = (rand() - 0.5) * w * 0.9;
     const sy = (rand() - 0.5) * h * 0.9;
-    const m0 = randomRot(), m1 = randomRot(), m2 = randomRot();
-    const rotAnim = rot.animate([
-      { transform: toMatrix3d(m0), offset: 0, easing: 'ease-out' },
-      { transform: toMatrix3d(m1), offset: 0.4, easing: 'ease-out' },
-      { transform: toMatrix3d(m2), offset: 0.75, easing: EASE_OUT },
-      { transform: toMatrix3d(settle), offset: 1 }
+    const turns = 2 + rand() * 2;
+    const anim = actor.animate([
+      { transform: `${actorBase} translate(${sx}px,${sy}px) scale(0.4) rotate(0deg)`, opacity: 0, offset: 0, easing: 'ease-out' },
+      { transform: `${actorBase} translate(${sx * 0.5}px,${sy * 0.5}px) scale(0.8) rotate(${180 * turns}deg)`, opacity: 1, offset: 0.35, easing: 'ease-out' },
+      { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1.12) rotate(${360 * turns}deg)`, offset: 0.85, easing: EASE_LAND },
+      { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1) rotate(${360 * turns}deg)`, offset: 1 }
     ], { duration: 1350 + delay, delay, fill: 'both' });
-    const actorAnim = actor.animate([
-      { transform: `${actorBase} translate(${sx}px,${sy}px) scale(0.5)`, opacity: 0, offset: 0, easing: 'ease-out' },
-      { transform: `${actorBase} translate(${sx * 0.55}px,${sy * 0.55}px) scale(0.85)`, opacity: 1, offset: 0.2, easing: 'ease-out' },
-      { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1.1)`, offset: 0.85, easing: EASE_LAND },
-      { transform: `${actorBase} translate(${t.x}px,${t.y}px) scale(1)`, offset: 1 }
-    ], { duration: 1350 + delay, delay, fill: 'both' });
-    Promise.all([rotAnim.finished, actorAnim.finished]).then(() => settleActor(actor, rot, settle, t, item.geo)).catch(() => {});
+    Promise.all([anim.finished]).then(() => {
+      actor.style.transform = `${actorBase} translate(${t.x}px,${t.y}px) scale(1) rotate(0deg)`;
+      actor.style.opacity = '1';
+    }).catch(() => {});
     window.setTimeout(() => Sound.thud(), 900 + delay + rand() * 300);
   });
   return targets;
@@ -960,6 +993,7 @@ function doRoll(exprStr) {
     return;
   }
   clearExprError();
+  state.lastRollExpr = exprStr;
   const roll = rollExpression(parsed);
   const field = $('#dice-field');
   field.innerHTML = '';
@@ -1077,6 +1111,49 @@ function closePanels() {
   document.body.classList.remove('has-panel');
 }
 
+/* ---------------- shake to reroll ---------------- */
+const Shake = (() => {
+  let last = null;
+  let cooldownUntil = 0;
+  let listening = false;
+  const THRESHOLD = 22; // delta g
+  const COOLDOWN_MS = 1200;
+
+  function onMotion(e) {
+    if (!state.shake || state.rolling) return;
+    const acc = e.accelerationIncludingGravity;
+    if (!acc) return;
+    const now = Date.now();
+    if (now < cooldownUntil) return;
+    if (!last) { last = { x: acc.x || 0, y: acc.y || 0, z: acc.z || 0 }; return; }
+    const dx = Math.abs((acc.x || 0) - last.x);
+    const dy = Math.abs((acc.y || 0) - last.y);
+    const dz = Math.abs((acc.z || 0) - last.z);
+    last = { x: acc.x || 0, y: acc.y || 0, z: acc.z || 0 };
+    if (dx + dy + dz > THRESHOLD) {
+      cooldownUntil = now + COOLDOWN_MS;
+      doRoll(state.lastRollExpr);
+    }
+  }
+
+  function start() {
+    if (listening) return;
+    if (!('DeviceMotionEvent' in window)) return;
+    const request = window.DeviceMotionEvent.requestPermission;
+    const begin = () => {
+      window.addEventListener('devicemotion', onMotion);
+      listening = true;
+    };
+    if (typeof request === 'function') {
+      request().then(res => { if (res === 'granted') begin(); }).catch(() => {});
+    } else {
+      begin();
+    }
+  }
+
+  return { start };
+})();
+
 function bindSettings() {
   const animRadios = $$('input[name="anim"]');
   animRadios.forEach(r => {
@@ -1099,6 +1176,7 @@ function bindSettings() {
   bind('sound-toggle', 'sound');
   bind('crit-toggle', 'crit');
   bind('fumble-toggle', 'fumble');
+  bind('shake-toggle', 'shake');
   Sound.setEnabled(state.sound);
 }
 
@@ -1130,6 +1208,7 @@ function init() {
   renderHistory();
   bindSettings();
   refreshSelection();
+  Shake.start();
 
   // roll-together button
   const rollBtn = document.createElement('button');
