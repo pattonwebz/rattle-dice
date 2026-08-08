@@ -1115,27 +1115,33 @@ function closePanels() {
 const Shake = (() => {
   let last = null;
   let lastTrigger = 0;
+  let lastActive = 0;
   let listening = false;
   const THRESHOLD = 22; // delta g
-  const DEBOUNCE_MS = 500;
+  const DEBOUNCE_MS = 700;   // min gap between triggers
+  const SETTLE_MS = 600;     // quiet period required before re-arming
 
   function onMotion(e) {
-    if (!state.shake || state.rolling) return;
     const acc = e.accelerationIncludingGravity;
-    if (!acc) return;
+    if (!acc || !state.shake) return;
     const now = Date.now();
-    // Debounce: ignore triggers that land inside the window after the last one.
     if (now - lastTrigger < DEBOUNCE_MS) return;
     if (!last) { last = { x: acc.x || 0, y: acc.y || 0, z: acc.z || 0 }; return; }
     const dx = Math.abs((acc.x || 0) - last.x);
     const dy = Math.abs((acc.y || 0) - last.y);
     const dz = Math.abs((acc.z || 0) - last.z);
     last = { x: acc.x || 0, y: acc.y || 0, z: acc.z || 0 };
-    if (dx + dy + dz > THRESHOLD) {
+    const delta = dx + dy + dz;
+    // Any significant motion pushes out the "quiet" timestamp: the settle
+    // window only starts once the phone has actually calmed down.
+    if (delta > THRESHOLD * 0.5) lastActive = now;
+    // Re-arm only after the phone has been quiet for a while, so a single
+    // long shake can never fire twice.
+    if (now - lastActive < SETTLE_MS) return;
+    if (state.rolling) return;
+    if (delta > THRESHOLD) {
       lastTrigger = now;
-      // Reset the baseline so the next event re-establishes it instead of
-      // computing a huge delta from stale pre-shake data (which caused
-      // repeated re-triggers after the debounce window).
+      lastActive = now;
       last = null;
       doRoll(state.lastRollExpr);
     }
