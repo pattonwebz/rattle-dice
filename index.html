@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Rattle — tabletop dice</title>
+  <meta name="description" content="A dice app for tabletop games. Roll any polyhedral dice, pools, and dice expressions with full, minimal, or no animation.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎲</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app" id="app">
+    <!-- Header: brand + settings -->
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Rattle</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="icon-btn" id="history-toggle" aria-expanded="false" aria-controls="history-panel" title="Roll history" aria-label="Open roll history">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/>
+          </svg>
+          <span class="count-badge" id="history-count" hidden>0</span>
+        </button>
+        <button class="icon-btn" id="settings-toggle" aria-expanded="false" aria-controls="settings-panel" title="Settings" aria-label="Open settings">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main working field: result readout + dice stage -->
+    <main class="workbench" id="workbench">
+      <section class="readout" aria-live="polite" aria-label="Last roll result">
+        <div class="readout-summary">
+          <span class="readout-label" id="result-label">Roll a die</span>
+          <span class="readout-value" id="result-value" aria-hidden="true">—</span>
+        </div>
+        <div class="readout-detail" id="result-detail"></div>
+      </section>
+
+      <section class="stage" id="stage" aria-label="Dice table">
+        <div class="stage-inner" id="stage-inner">
+          <p class="stage-empty" id="stage-empty">Pick a die and roll it.</p>
+          <div class="dice-field" id="dice-field"></div>
+          <div class="table-glow" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <!-- Dice tray: the operate surface -->
+      <section class="tray" aria-label="Dice tray">
+        <div class="tray-head">
+          <h2 class="tray-title" id="tray-title">Dice</h2>
+          <button class="text-btn" id="quick-select" aria-expanded="false" aria-controls="quick-list">Quick rolls</button>
+        </div>
+        <div class="quick-list" id="quick-list" hidden>
+          <button class="chip" data-expr="1d20">d20 check</button>
+          <button class="chip" data-expr="1d20+5">d20 +5</button>
+          <button class="chip" data-expr="2d20kh1">Advantage</button>
+          <button class="chip" data-expr="2d20kl1">Disadvantage</button>
+          <button class="chip" data-expr="4d6dl1">4d6 drop lowest</button>
+          <button class="chip" data-expr="2d6">2d6</button>
+          <button class="chip" data-expr="3d6">3d6</button>
+          <button class="chip" data-expr="1d8+1d4">d8 + d4</button>
+          <button class="chip" data-expr="1d10">d10</button>
+          <button class="chip" data-expr="1d12">d12</button>
+          <button class="chip" data-expr="1d100">Percentile</button>
+        </div>
+        <div class="die-tray" id="die-tray" role="list" aria-label="Available dice"></div>
+
+        <!-- Expression roller -->
+        <form class="expr-form" id="expr-form">
+          <label class="expr-label" for="expr-input">Roll expression</label>
+          <div class="expr-row">
+            <input type="text" id="expr-input" class="expr-input" inputmode="text" autocomplete="off" spellcheck="false"
+                   placeholder="e.g. 2d6+3, 4d6dl1, 2d20kh1" aria-describedby="expr-help">
+            <button type="submit" class="btn btn-primary" id="expr-roll">Roll</button>
+          </div>
+          <p class="expr-help" id="expr-help">
+            NdX + modifiers · <code>kh</code>/<code>kl</code> keep high/low · <code>dl</code> drop low ·
+            <code>r1</code> reroll 1s · <code>!</code> exploding · <code>mi</code>/<code>ma</code> min/max
+          </p>
+        </form>
+      </section>
+    </main>
+
+    <!-- History panel (right rail on desktop, overlay on mobile) -->
+    <aside class="panel panel-right" id="history-panel" aria-label="Roll history" hidden>
+      <div class="panel-head">
+        <h2 class="panel-title">History</h2>
+        <button class="icon-btn" data-close-panel="history" aria-label="Close history">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <ul class="history-list" id="history-list"></ul>
+      <button class="text-btn panel-clear" id="history-clear">Clear history</button>
+    </aside>
+
+    <!-- Settings panel -->
+    <aside class="panel panel-right" id="settings-panel" aria-label="Settings" hidden>
+      <div class="panel-head">
+        <h2 class="panel-title">Settings</h2>
+        <button class="icon-btn" data-close-panel="settings" aria-label="Close settings">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <fieldset class="setting">
+          <legend class="setting-label">Animation</legend>
+          <div class="seg" role="radiogroup" aria-label="Animation mode" id="anim-seg">
+            <label class="seg-opt"><input type="radio" name="anim" value="full"><span>Full</span></label>
+            <label class="seg-opt"><input type="radio" name="anim" value="minimal"><span>Minimal</span></label>
+            <label class="seg-opt"><input type="radio" name="anim" value="none"><span>None</span></label>
+          </div>
+          <p class="setting-hint" id="anim-hint">Full tumbles dice across the table. Minimal spins a die in place. None rolls instantly.</p>
+        </fieldset>
+        <fieldset class="setting">
+          <legend class="setting-label">Tray</legend>
+          <label class="toggle-row">
+            <span>Roll dice together</span>
+            <input type="checkbox" id="roll-together">
+          </label>
+          <label class="toggle-row">
+            <span>Sound effects</span>
+            <input type="checkbox" id="sound-toggle">
+          </label>
+        </fieldset>
+        <fieldset class="setting">
+          <legend class="setting-label">Results</legend>
+          <label class="toggle-row">
+            <span>Auto-crit on natural 20</span>
+            <input type="checkbox" id="crit-toggle">
+          </label>
+          <label class="toggle-row">
+            <span>Auto-fumble on natural 1</span>
+            <input type="checkbox" id="fumble-toggle">
+          </label>
+        </fieldset>
+        <p class="settings-note">Settings and history are stored in your browser only.</p>
+      </div>
+    </aside>
+
+    <!-- Backdrop for mobile panels -->
+    <div class="scrim" id="scrim" hidden></div>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
