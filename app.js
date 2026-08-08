@@ -151,52 +151,68 @@ function dodecaDirs() {
   return out.map(V.norm);
 }
 
-// Build the 12 faces of a dodecahedron. Its face normals point at the 12
-// vertices of a dual icosahedron (icosaDirs), and each face contains the 5
-// dodecahedron vertices (dodecaDirs) nearest to that direction.
-function dodecaFaces() {
-  const faceDirs = icosaDirs();       // 12 icosa vertices = dodeca face normals
-  const verts = dodecaDirs();         // 20 dodeca vertices
-  return faceDirs.map(n => {
-    const dots = verts
-      .map((v, i) => ({ v, d: V.dot(v, n) }))
-      .sort((a, b) => b.d - a.d);
-    // All 5 face corners share the same dot value (they are coplanar);
-    // take every vertex within epsilon of the max so float noise never
-    // drops a corner.
-    const max = dots[0].d;
-    const faceVerts = dots.filter(x => x.d > max - 1e-6).map(x => x.v);
-    const dist = max;
-    return { n, dist, verts: faceVerts };
-  });
-}
-
 // Build the 20 faces of an icosahedron directly from its 12 vertices.
 // Each face is a triangle of three pairwise-adjacent vertices; adjacency
 // is the icosahedron edge length. This yields exactly 20 coplanar faces.
+// Returns faces as {n, dist, verts, idx} where idx are the vertex indices.
 function icosaFaces() {
   const verts = icosaDirs();
-  const edgeLen = V.dot(verts[0], verts[1]); // cos between adjacent verts
+  const edge = V.dot(verts[0], verts[1]); // cos between adjacent verts
   const faces = [];
   const seen = new Set();
   for (let a = 0; a < verts.length; a++) {
     for (let b = a + 1; b < verts.length; b++) {
-      if (Math.abs(V.dot(verts[a], verts[b]) - edgeLen) > 1e-6) continue;
+      if (Math.abs(V.dot(verts[a], verts[b]) - edge) > 1e-6) continue;
       for (let c = b + 1; c < verts.length; c++) {
-        if (Math.abs(V.dot(verts[a], verts[c]) - edgeLen) > 1e-6) continue;
-        if (Math.abs(V.dot(verts[b], verts[c]) - edgeLen) > 1e-6) continue;
+        if (Math.abs(V.dot(verts[a], verts[c]) - edge) > 1e-6) continue;
+        if (Math.abs(V.dot(verts[b], verts[c]) - edge) > 1e-6) continue;
         const key = [a, b, c].sort((x, y) => x - y).join(',');
         if (seen.has(key)) continue;
         seen.add(key);
-        faces.push({ a, b, c });
+        faces.push({ idx: [a, b, c] });
       }
     }
   }
-  return faces.map(({ a, b, c }) => {
-    const tri = [verts[a], verts[b], verts[c]];
+  return faces.map(({ idx }) => {
+    const tri = idx.map(i => verts[i]);
     const n = faceNormal(tri);
     const dist = V.dot(n, tri[0]);
-    return { n, dist, verts: tri };
+    return { n, dist, verts: tri, idx };
+  });
+}
+
+// Build the 12 faces of a dodecahedron as the exact dual of the icosahedron.
+// The dodecahedron's 20 vertices are the icosahedron's 20 FACE NORMALS
+// (from icosaFaces().n); two dodeca vertices are adjacent when their icosa
+// faces share an edge (2 vertices). A dodeca face surrounds an icosa vertex
+// v and consists of the 5 dodeca vertices whose icosa faces contain v.
+// This yields 12 coplanar pentagons whose normals point exactly at the
+// 12 icosa vertices.
+function dodecaFaces() {
+  const ico = icosaFaces();
+  const icoVerts = icosaDirs();
+  const dodecaVerts = ico.map(f => f.n); // 20 dodeca vertices
+  return icoVerts.map(v => {
+    const pent = [];
+    ico.forEach((f, fi) => {
+      if (f.idx.some(i => Math.abs(V.dot(icoVerts[i], v) - 1) < 1e-9)) pent.push(dodecaVerts[fi]);
+    });
+    const nrm = faceNormal(pent);
+    // Order the 5 coplanar vertices as a cycle around the face normal so
+    // the polygon is a proper pentagon (adjacent in the cycle are edges).
+    const ref = [1, 0, 0];
+    if (Math.abs(V.dot(nrm, ref)) > 0.9) ref[0] = 0, ref[1] = 1;
+    const u = V.norm(V.cross(nrm, ref));
+    const w = V.cross(nrm, u);
+    const center = pent.reduce((s, p) => [s[0] + p[0], s[1] + p[1], s[2] + p[2]], [0, 0, 0]).map(x => x / pent.length);
+    const sorted = pent.map(p => ({
+      p,
+      a: Math.atan2(
+        (p[0] - center[0]) * w[0] + (p[1] - center[1]) * w[1] + (p[2] - center[2]) * w[2],
+        (p[0] - center[0]) * u[0] + (p[1] - center[1]) * u[1] + (p[2] - center[2]) * u[2]
+      )
+    })).sort((x, y) => x.a - y.a).map(x => x.p);
+    return { n: nrm, dist: V.dot(nrm, pent[0]), verts: sorted };
   });
 }
 
@@ -686,9 +702,10 @@ const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
 const EASE_LAND = 'cubic-bezier(0.34, 1.4, 0.5, 1)';
 
 // Apply the settle rotation to the die's faces: hide back-facing faces and
-// reorder the remaining faces back-to-front so the browser paints a solid
-// die. (CSS backface-visibility is unreliable across browsers, so we do the
-// painter's algorithm ourselves.)
+// sort the remaining faces far-to-near so the browser paints a solid die.
+// (CSS backface-visibility is unreliable across browsers, so we compute
+// facing ourselves; reordering far-to-near also helps renderers that do
+// not depth-sort preserve-3d faces correctly.)
 function poseDie(rot, settle, geo) {
   const faces = [...rot.querySelectorAll('.face')];
   const posed = [];
@@ -701,17 +718,14 @@ function poseDie(rot, settle, geo) {
       settle[1][0] * n[0] + settle[1][1] * n[1] + settle[1][2] * n[2],
       settle[2][0] * n[0] + settle[2][1] * n[1] + settle[2][2] * n[2]
     ];
-    // centroid world z (viewer distance)
     const c = geoFace ? geoFace.verts.reduce((a, p) => [a[0] + p[0], a[1] + p[1], a[2] + p[2]], [0, 0, 0]).map(x => x / geoFace.verts.length) : [0, 0, 0];
     const wz = settle[2][0] * c[0] + settle[2][1] * c[1] + settle[2][2] * c[2];
     const facing = wn[2] > 0.05; // toward viewer
     posed.push({ el: f, wz, facing });
   }
-  // Hide back faces; keep front faces sorted near-to-far so far faces paint
-  // first and near faces paint last (on top).
   for (const p of posed) p.el.style.visibility = p.facing ? 'visible' : 'hidden';
   posed.sort((a, b) => (a.facing === b.facing) ? (a.wz - b.wz) : (a.facing ? 1 : -1));
-  for (const p of posed) rot.appendChild(p.el); // reorder
+  for (const p of posed) rot.appendChild(p.el);
 }
 
 function settleActor(actor, rot, settle, t, geo) {
