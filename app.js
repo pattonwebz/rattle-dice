@@ -292,9 +292,9 @@ function trapezoFaces(tens) { // pentagonal trapezohedron via antiprism dual
 
 // Project the face's 3D vertices into the face element's own local frame
 // (the face element is rotated by alignMatrix(n, [0,0,1]) so +Z = normal).
-// Returns { poly, w, h } where poly is the clip-path polygon in percent
-// coordinates and w/h are the face's full extent in the die's unit space.
-function polyPoints(n, verts) {
+// Returns a clip-path polygon in percent coordinates relative to a square
+// panel of the given side (in die-unit space).
+function polyPoints(n, verts, panel) {
   const M = alignMatrix(n, [0, 0, 1]);
   const pts = verts.map(v => {
     const x = M[0][0] * v[0] + M[0][1] * v[1] + M[0][2] * v[2];
@@ -303,13 +303,14 @@ function polyPoints(n, verts) {
   });
   const c = [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
   const sorted = pts.map(p => ({ p, a: Math.atan2(p[1] - c[1], p[0] - c[0]) })).sort((a, b) => a.a - b.a).map(x => x.p);
-  let maxX = 0, maxY = 0;
-  for (const p of sorted) { maxX = Math.max(maxX, Math.abs(p[0])); maxY = Math.max(maxY, Math.abs(p[1])); }
-  const pad = 1.04;
-  const w = maxX * 2 * pad, h = maxY * 2 * pad;
-  const poly = sorted.map(p => `${((p[0] / w + 0.5) * 100).toFixed(2)}% ${((p[1] / h + 0.5) * 100).toFixed(2)}%`).join(', ');
-  return { poly, w, h };
+  const half = panel / 2;
+  const poly = sorted.map(p => `${((p[0] / half + 1) * 50).toFixed(2)}% ${((p[1] / half + 1) * 50).toFixed(2)}%`).join(', ');
+  return { poly };
 }
+
+// Uniform square panel per die type: large enough to contain any face's
+// polygon, small enough that adjacent panels don't overlap much.
+const FACE_PANEL = { d4: 1.35, d6: 1.42, d8: 1.25, d10: 1.05, d12: 0.95, d20: 0.95, d10t: 1.05, d100: 1.42 };
 
 const GEOMETRY = (() => {
   const base = {
@@ -322,14 +323,10 @@ const GEOMETRY = (() => {
   };
   base.d10t = { faces: trapezoFaces(true) };
   for (const key of Object.keys(base)) {
+    const panel = FACE_PANEL[key];
     for (const f of base[key].faces) {
-      const pp = polyPoints(f.n, f.verts);
-      f.poly = pp.poly;
-      f.w = pp.w;
-      f.h = pp.h;
+      f.poly = polyPoints(f.n, f.verts, panel).poly;
       // d4: place the label at the corner that carries this face's value.
-      // The value vertex is the tetrahedron vertex not on this face; the
-      // other three faces all share it. Project it into this face's frame.
       if (key === 'd4') {
         const s = 1 / Math.sqrt(3);
         const vertsAll = [
@@ -340,7 +337,7 @@ const GEOMETRY = (() => {
         const M = alignMatrix(f.n, [0, 0, 1]);
         const ax = M[0][0] * apex[0] + M[0][1] * apex[1] + M[0][2] * apex[2];
         const ay = M[1][0] * apex[0] + M[1][1] * apex[1] + M[1][2] * apex[2];
-        f.corner = [((ax / f.w + 0.5) * 100), ((ay / f.h + 0.5) * 100)];
+        f.corner = [((ax / (panel / 2) + 1) * 50), ((ay / (panel / 2) + 1) * 50)];
       }
     }
   }
@@ -503,20 +500,18 @@ function buildFaceEl(face, dieType, size, worldN) {
   const el = document.createElement('div');
   el.className = 'face';
   el.dataset.value = face.value;
-  // Panel is sized to the face's own bounding box so adjacent faces meet
-  // exactly (no seams). face.w/h are in die-unit space; scale by size/2.
-  const w = Math.max(1e-3, (face.w || 1) * size / 2);
-  const h = Math.max(1e-3, (face.h || 1) * size / 2);
-  el.style.width = w.toFixed(1) + 'px';
-  el.style.height = h.toFixed(1) + 'px';
-  el.style.marginLeft = (-w / 2).toFixed(1) + 'px';
-  el.style.marginTop = (-h / 2).toFixed(1) + 'px';
+  // Uniform square panel per die type: large enough to contain any face's
+  // polygon, small enough that adjacent panels don't overlap much. The
+  // clip-path trims each face to its polygon shape.
+  const panel = size * (FACE_PANEL[dieType] || 1.1);
+  el.style.width = el.style.height = panel.toFixed(1) + 'px';
+  el.style.marginLeft = el.style.marginTop = (-panel / 2).toFixed(1) + 'px';
   const M = alignMatrix(face.n, [0, 0, 1]);
   const tz = face.dist * size / 2;
   el.style.transform = `${toMatrix3d(M)} translateZ(${tz.toFixed(2)}px)`;
   if (face.poly) el.style.clipPath = `polygon(${face.poly})`;
   el.style.setProperty('--shade', faceShade(worldN || face.n, dieType));
-  el.innerHTML = faceHTML(face, dieType, Math.max(w, h), worldN);
+  el.innerHTML = faceHTML(face, dieType, panel, worldN);
   return el;
 }
 
@@ -582,6 +577,7 @@ function applyMatrix(M, v) {
 function buildDie(type, value, size) {
   const actor = document.createElement('div');
   actor.className = 'die-actor';
+  actor._dieType = type;
   const rot = document.createElement('div');
   rot.className = 'die-rotator die-' + type;
   const g = GEOMETRY[type] || GEOMETRY.d6;
@@ -701,33 +697,6 @@ function layoutPositions(count, size, { w, h }) {
 const EASE_OUT = 'cubic-bezier(0.22, 1, 0.36, 1)';
 const EASE_LAND = 'cubic-bezier(0.34, 1.4, 0.5, 1)';
 
-// Apply the settle rotation to the die's faces: hide back-facing faces and
-// sort the remaining faces far-to-near so the browser paints a solid die.
-// (CSS backface-visibility is unreliable across browsers, so we compute
-// facing ourselves; reordering far-to-near also helps renderers that do
-// not depth-sort preserve-3d faces correctly.)
-function poseDie(rot, settle, geo) {
-  const faces = [...rot.querySelectorAll('.face')];
-  const posed = [];
-  for (const f of faces) {
-    const geoFace = geo && geo.faces.find(x => x.value === parseInt(f.dataset.value, 10));
-    const n = geoFace ? geoFace.n : [0, 0, 1];
-    // world normal under row-vector convention: S * n
-    const wn = [
-      settle[0][0] * n[0] + settle[0][1] * n[1] + settle[0][2] * n[2],
-      settle[1][0] * n[0] + settle[1][1] * n[1] + settle[1][2] * n[2],
-      settle[2][0] * n[0] + settle[2][1] * n[1] + settle[2][2] * n[2]
-    ];
-    const c = geoFace ? geoFace.verts.reduce((a, p) => [a[0] + p[0], a[1] + p[1], a[2] + p[2]], [0, 0, 0]).map(x => x / geoFace.verts.length) : [0, 0, 0];
-    const wz = settle[2][0] * c[0] + settle[2][1] * c[1] + settle[2][2] * c[2];
-    const facing = wn[2] > 0.05; // toward viewer
-    posed.push({ el: f, wz, facing });
-  }
-  for (const p of posed) p.el.style.visibility = p.facing ? 'visible' : 'hidden';
-  posed.sort((a, b) => (a.facing === b.facing) ? (a.wz - b.wz) : (a.facing ? 1 : -1));
-  for (const p of posed) rot.appendChild(p.el);
-}
-
 function settleActor(actor, rot, settle, t, geo) {
   // Cancel any running/filled animations so inline styles win the cascade.
   for (const el of [actor, rot]) {
@@ -736,7 +705,106 @@ function settleActor(actor, rot, settle, t, geo) {
   rot.style.transform = toMatrix3d(settle);
   actor.style.transform = `translate(-50%, -50%) translate(${t.x}px,${t.y}px) scale(1)`;
   actor.style.opacity = '1';
-  poseDie(rot, settle, geo);
+  // Render the settled die as a 2D projected SVG: identical output in every
+  // browser (CSS preserve-3d + clip-path faces composite badly on some
+  // renderers, showing overlapping/see-through faces).
+  renderSettledDie(actor, settle, geo);
+}
+
+// Perspective-project the settled die onto a 2D SVG. Painter's algorithm:
+// sort visible faces far-to-near and draw as polygons. This is plain 2D
+// rendering, so it looks correct everywhere.
+function renderSettledDie(actor, settle, geo) {
+  const size = parseFloat(actor.style.getPropertyValue('--die-size')) || 100;
+  const R = size / 2;
+  const cam = 900; // perspective distance in px at die size 100
+  const project = p => {
+    // world coords: S * p (die-unit space), scaled to px
+    const wx = (settle[0][0] * p[0] + settle[0][1] * p[1] + settle[0][2] * p[2]) * R;
+    const wy = (settle[1][0] * p[0] + settle[1][1] * p[1] + settle[1][2] * p[2]) * R;
+    const wz = (settle[2][0] * p[0] + settle[2][1] * p[1] + settle[2][2] * p[2]) * R;
+    const f = cam / (cam - wz);
+    return { x: wx * f, y: wy * f, z: wz };
+  };
+  const faces = [];
+  for (const f of geo.faces) {
+    const pts = f.verts.map(project);
+    const cz = pts.reduce((s, p) => s + p.z, 0) / pts.length;
+    const n = f.n;
+    const wnz = settle[2][0] * n[0] + settle[2][1] * n[1] + settle[2][2] * n[2];
+    if (wnz <= 0.05) continue; // back face
+    faces.push({ f, pts, cz });
+  }
+  faces.sort((a, b) => a.cz - b.cz); // far first
+  const NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg');
+  const vb = size * 0.55;
+  svg.setAttribute('viewBox', `${-vb} ${-vb} ${vb * 2} ${vb * 2}`);
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', '100%');
+  svg.style.position = 'absolute';
+  svg.style.inset = '0';
+  svg.style.overflow = 'visible';
+  for (const { f, pts } of faces) {
+    const poly = document.createElementNS(NS, 'polygon');
+    poly.setAttribute('points', pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' '));
+    const d = V.dot(f.n, LIGHT_DIR);
+    const t = (d + 1) / 2;
+    const hue = DIE_HUE[actor._dieType] !== undefined ? DIE_HUE[actor._dieType] : 70;
+    const chroma = hue === 80 ? 0.015 : 0.05;
+    const dark = Math.min(0.92, 0.66 + t * 0.24);
+    const light = Math.min(0.96, dark + 0.07);
+    poly.setAttribute('fill', `oklch(${light.toFixed(2)} ${chroma} ${hue})`);
+    poly.setAttribute('stroke', 'oklch(0.45 0.02 60 / 0.9)');
+    poly.setAttribute('stroke-width', '0.8');
+    // face label
+    if (f.label !== undefined) {
+      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+      // A standalone d10's 0 reads as 10.
+      let text = f.label;
+      if (actor._dieType === 'd10' && f.value === 0) text = '10';
+      if (actor._dieType === 'd10t') text = f.label; // tens die keeps 00-90
+      const label = document.createElementNS(NS, 'text');
+      label.setAttribute('x', cx.toFixed(1));
+      label.setAttribute('y', cy.toFixed(1));
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('dominant-baseline', 'central');
+      label.setAttribute('font-size', (size * 0.14).toFixed(1));
+      label.setAttribute('font-weight', 'bold');
+      label.setAttribute('fill', 'oklch(0.16 0.01 55)');
+      label.textContent = text;
+      const wrap = document.createElementNS(NS, 'g');
+      wrap.appendChild(poly);
+      wrap.appendChild(label);
+      svg.appendChild(wrap);
+    } else if (actor._dieType === 'd6' && f.value >= 1 && f.value <= 6) {
+      // cube pips: inset from edges like a real d6
+      const wrap = document.createElementNS(NS, 'g');
+      wrap.appendChild(poly);
+      const pips = PIPS[f.value] || [];
+      const pts2 = f.verts.map(project);
+      // bounding box of the projected face
+      const xs = pts2.map(p => p.x), ys = pts2.map(p => p.y);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const pw = (maxX - minX) * 0.35, ph = (maxY - minY) * 0.35;
+      for (const p of pips) {
+        const dot = document.createElementNS(NS, 'circle');
+        dot.setAttribute('cx', (minX + pw + p[0] * pw).toFixed(1));
+        dot.setAttribute('cy', (minY + ph + p[1] * ph).toFixed(1));
+        dot.setAttribute('r', (pw * 0.32).toFixed(1));
+        dot.setAttribute('fill', 'oklch(0.16 0.01 55)');
+        wrap.appendChild(dot);
+      }
+      svg.appendChild(wrap);
+    } else {
+      svg.appendChild(poly);
+    }
+  }
+  // remove the CSS 3D faces, attach the SVG
+  while (actor.firstChild) actor.removeChild(actor.firstChild);
+  actor.appendChild(svg);
 }
 
 function animateRoll(items, mode) {
