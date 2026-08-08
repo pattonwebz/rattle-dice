@@ -99,11 +99,26 @@ function octaFaces() {
     raw.push({ verts: [T, E[k], E[(k + 1) % 4]] });
     raw.push({ verts: [B, E[k], E[(k + 1) % 4]] });
   }
-  return raw.map((f, i) => {
+  const faces = raw.map(f => {
     const n = faceNormal(f.verts);
-    const value = i < 4 ? i + 1 : 8 - (i - 4); // tops 1-4, bottoms 8-5
-    return { value, label: String(value), n, dist: V.dot(n, f.verts[0]), verts: f.verts };
+    return { n, dist: V.dot(n, f.verts[0]), verts: f.verts };
   });
+  // Assign 1-8 so geometric opposites sum to 9, matching a real d8.
+  const values = new Array(8);
+  const taken = new Set();
+  let low = 1, high = 8;
+  for (let i = 0; i < 8; i++) {
+    if (taken.has(i)) continue;
+    let opp = -1;
+    for (let j = i + 1; j < 8; j++) {
+      if (!taken.has(j) && V.dot(faces[i].n, faces[j].n) < -0.999) { opp = j; break; }
+    }
+    values[i] = low;
+    taken.add(i);
+    if (opp >= 0) { values[opp] = high; taken.add(opp); }
+    low++; high--;
+  }
+  return faces.map((f, i) => ({ ...f, value: values[i], label: String(values[i]) }));
 }
 
 function icosaDirs() {
@@ -127,12 +142,35 @@ function dodecaDirs() {
   return out.map(V.norm);
 }
 
-function maxDotFaces(normals, verts) {
-  return normals.map(n => {
-    let max = -Infinity;
-    for (const v of verts) max = Math.max(max, V.dot(v, n));
-    const faceVerts = verts.filter(v => V.dot(v, n) > max - 1e-6);
-    return { n, dist: max, verts: faceVerts };
+// Build the 12 faces of a dodecahedron. Its face normals point at the 12
+// vertices of a dual icosahedron (icosaDirs), and each face contains the 5
+// dodecahedron vertices (dodecaDirs) nearest to that direction.
+function dodecaFaces() {
+  const faceDirs = icosaDirs();       // 12 icosa vertices = dodeca face normals
+  const verts = dodecaDirs();         // 20 dodeca vertices
+  return faceDirs.map(n => {
+    const dots = verts
+      .map((v, i) => ({ v, d: V.dot(v, n) }))
+      .sort((a, b) => b.d - a.d);
+    const faceVerts = dots.slice(0, 5).map(x => x.v);
+    const dist = V.dot(n, faceVerts[0]);
+    return { n, dist, verts: faceVerts };
+  });
+}
+
+// Build the 20 faces of an icosahedron. Face normals point at the 20
+// vertices of a dual dodecahedron (dodecaDirs); each face contains the 3
+// icosahedron vertices (icosaDirs) nearest to that direction.
+function icosaFaces() {
+  const faceDirs = dodecaDirs();      // 20 dodeca vertices = icosa face normals
+  const verts = icosaDirs();          // 12 icosa vertices
+  return faceDirs.map(n => {
+    const dots = verts
+      .map(v => ({ v, d: V.dot(v, n) }))
+      .sort((a, b) => b.d - a.d);
+    const faceVerts = dots.slice(0, 3).map(x => x.v);
+    const dist = V.dot(n, faceVerts[0]);
+    return { n, dist, verts: faceVerts };
   });
 }
 
@@ -211,11 +249,15 @@ function trapezoFaces(tens) { // pentagonal trapezohedron via antiprism dual
 }
 
 function polyPoints(n, verts) {
-  let ref = [1, 0, 0];
-  if (Math.abs(V.dot(n, ref)) > 0.9) ref = [0, 1, 0];
-  const u = V.norm(V.cross(n, ref));
-  const w = V.cross(n, u);
-  const pts = verts.map(v => [V.dot(v, u), V.dot(v, w)]);
+  // Project the face's 3D vertices into the face element's own local frame.
+  // The face element is rotated by alignMatrix(n, [0,0,1]) so its +Z is the
+  // face normal; X/Y in that frame are the first two rows of the matrix.
+  const M = alignMatrix(n, [0, 0, 1]);
+  const pts = verts.map(v => {
+    const x = M[0][0] * v[0] + M[0][1] * v[1] + M[0][2] * v[2];
+    const y = M[1][0] * v[0] + M[1][1] * v[1] + M[1][2] * v[2];
+    return [x, y];
+  });
   const c = [pts.reduce((s, p) => s + p[0], 0) / pts.length, pts.reduce((s, p) => s + p[1], 0) / pts.length];
   const sorted = pts.map(p => ({ p, a: Math.atan2(p[1] - c[1], p[0] - c[0]) })).sort((a, b) => a.a - b.a).map(x => x.p);
   let max = 0;
@@ -230,8 +272,8 @@ const GEOMETRY = (() => {
     d6: { faces: cubeFaces(), panel: 1 },
     d8: { faces: octaFaces(), panel: 0.8 },
     d10: { faces: trapezoFaces(false), panel: 0.56 },
-    d12: { faces: assignOpposites(maxDotFaces(icosaDirs(), dodecaDirs())), panel: 0.5 },
-    d20: { faces: assignOpposites(maxDotFaces(dodecaDirs(), icosaDirs())), panel: 0.52 }
+    d12: { faces: assignOpposites(dodecaFaces()), panel: 0.5 },
+    d20: { faces: assignOpposites(icosaFaces()), panel: 0.52 }
   };
   base.d10t = { faces: trapezoFaces(true), panel: 0.56 };
   for (const key of Object.keys(base)) {
@@ -322,11 +364,27 @@ function rollGroup(g) {
   }
   const dies = [];
   for (let k = 0; k < g.cnt; k++) {
-    dies.push({ value: rollDie(g.sides, g.ops), type: 'd' + g.sides, kept: true, dropped: false });
+    // A physical d10 is labeled 0-9; 0 reads as 10 when rolled alone.
+    if (g.sides === 10) {
+      const raw = randInt(10); // 0-9
+      dies.push({
+        value: raw,
+        type: 'd10',
+        kept: true,
+        dropped: false,
+        label: raw === 0 ? '10' : String(raw)
+      });
+    } else {
+      dies.push({ value: rollDie(g.sides, g.ops), type: 'd' + g.sides, kept: true, dropped: false });
+    }
   }
+  // A d10's face value is 0-9 internally; 0 reads as 10 when rolled alone.
+  // dieVal is the sortable value (0 -> 10); contrib is what a kept die adds.
+  const dieVal = d => (d.type === 'd10' && d.value === 0) ? 10 : d.value;
+  const contrib = d => (d.kept && d.type === 'd10' && d.value === 0) ? 10 : (d.kept ? d.value : 0);
   const { kh, kl, dh, dl } = g.ops;
   if (kh || kl || dh || dl) {
-    const idx = dies.map((_, i) => i).sort((a, b) => dies[a].value - dies[b].value);
+    const idx = dies.map((_, i) => i).sort((a, b) => dieVal(dies[a]) - dieVal(dies[b]));
     const drop = n => { for (let k = 0; k < n; k++) dies[idx[k]].dropped = true; };       // lowest
     const dropHigh = n => { for (let k = 0; k < n; k++) dies[idx[idx.length - 1 - k]].dropped = true; }; // highest
     if (kh) drop(Math.max(0, dies.length - kh));       // keep highest: drop lowest N-kh
@@ -335,7 +393,7 @@ function rollGroup(g) {
     else if (dl) drop(dl);
     for (const d of dies) if (d.dropped) d.kept = false;
   }
-  return { sides: g.sides, cnt: g.cnt, dies, total: dies.reduce((s, d) => s + (d.kept ? d.value : 0), 0) };
+  return { sides: g.sides, cnt: g.cnt, dies, total: dies.reduce((s, d) => s + (d.kept ? contrib(d) : 0), 0) };
 }
 
 function rollExpression(parsed) {
@@ -412,17 +470,25 @@ function faceHTML(face, dieType, panel, worldN) {
 }
 
 function settleMatrix(face) {
+  // The browser's world transform of a face normal is S^T * n (matrix3d
+  // emits rows as columns). We want the target face's world normal to be
+  // [0,0,1]:  S^T * n_target = [0,0,1]  <=>  n_target = S * [0,0,1].
+  // With S = spin * R, the third column of S is spin * (R's third column).
+  // Verified empirically: S = spin * R maps n_target to exactly [0,0,1],
+  // while S = R * spin tilts it. (Verified for d20 and d8 in headless run.)
   const R = alignMatrix(face.n, [0, 0, 1]);
   const spin = rotMatrix([0, 0, 1], rand() * Math.PI * 2);
   return mul3(spin, R);
 }
 
-// Apply rotation matrix R to vector v (row-vector convention like toMatrix3d).
+// Apply rotation matrix M to vector v using the same convention the CSS
+// matrix3d() transform uses (column-vector). toMatrix3d emits M's rows as
+// matrix3d columns, so the world transform of a vector is M^T * v.
 function applyMatrix(M, v) {
   return [
-    M[0][0] * v[0] + M[0][1] * v[1] + M[0][2] * v[2],
-    M[1][0] * v[0] + M[1][1] * v[1] + M[1][2] * v[2],
-    M[2][0] * v[0] + M[2][1] * v[1] + M[2][2] * v[2]
+    M[0][0] * v[0] + M[1][0] * v[1] + M[2][0] * v[2],
+    M[0][1] * v[0] + M[1][1] * v[1] + M[2][1] * v[2],
+    M[0][2] * v[0] + M[1][2] * v[1] + M[2][2] * v[2]
   ];
 }
 
